@@ -38,6 +38,8 @@ type Dir struct {
 
 	modTimeMu sync.Mutex // protects the following
 	modTime   time.Time
+
+	accessed *DirectAccessManager // last accessed entries - can be empty but not nil
 }
 
 //go:generate stringer -type=vState
@@ -50,6 +52,7 @@ const (
 	vAddFile               // added file
 	vAddDir                // added directory
 	vDel                   // removed file or directory
+
 )
 
 func newDir(vfs *VFS, f fs.Fs, parent *Dir, fsDir fs.Directory) *Dir {
@@ -62,6 +65,7 @@ func newDir(vfs *VFS, f fs.Fs, parent *Dir, fsDir fs.Directory) *Dir {
 		modTime: fsDir.ModTime(context.TODO()),
 		inode:   newInode(),
 		items:   make(map[string]Node),
+		accessed: newDirectAccessManager(),
 	}
 }
 
@@ -464,6 +468,7 @@ func (d *Dir) _readDir() error {
 		return err
 	}
 
+	d.accessed.clear()
 	d.read = when
 	return nil
 }
@@ -692,39 +697,96 @@ func (d *Dir) readDir() error {
 	return d._readDir()
 }
 
+
 // stat a single item in the directory
 //
 // returns ENOENT if not found.
 // returns a custom error if directory on a case-insensitive file system
 // contains files with names that differ only by case.
 func (d *Dir) stat(leaf string) (Node, error) {
+	fs.Debugf("==================================================================", "")
+	fs.Debugf("", "============================ vfs::dir::stat %v ================================", path.Join(d.path, leaf))
+	fs.Debugf("==================================================================", "")
+
+	when := time.Now()
+
+	// 1. check if present  the directory cache if not outdated/stale
+	_, stale := d._age(when)
+
+	if !stale {
+		// look in the existing parent dir items
+		item, _ := d.searchFileInDirItems(leaf)
+		if item != nil { // found it !
+			fs.Debugf("vfs::dir::stat", "FOUND file %v IN EXISTING PARENT DIR ITEMS", path.Join(d.path, leaf))
+			return item, nil
+		}
+	}
+
+	// 2. check if the file is among the valid directly accessed files
+	if d.isDirectAccessHeuristicOn() {
+		item, err := d.directAccessLookup(leaf)
+		if err != nil {
+			return nil, err
+		}
+
+		if item != nil {
+			fs.Debugf("vfs::dir::stat", "found file %v via direct access", path.Join(d.path, leaf))
+			return *item.node, nil
+		} else {
+			fs.Debugf("vfs::dir::stat", "did NOT find file %v via direct access!!!!!!!!", path.Join(d.path, leaf))
+			return nil, ENOENT
+		}
+	}
+
+	// 3.the directory content needs updating
+	if !stale {
+		return nil, ENOENT
+	}
+
+	// update parent dir content if needed. N.B: this should never happen
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	fs.Debugf(d.path, "vfs::dir::stat leaf=%v -->  d._readDir()", leaf)
 	err := d._readDir()
 	if err != nil {
 		return nil, err
 	}
-	item, ok := d.items[leaf]
+
+	// search in updated list
+	item, err := d.searchFileInDirItems(leaf)
+	if err != nil {
+		return nil, err
+	}
+
+	fs.Debugf("vfs::dir::stat", "FOUND file %v IN UPDATED PARENT ITEMS", path.Join(d.path, leaf))
+	return item, nil
+}
+
+// search for a (leaf) File among existing Dir Items (children) by name
+// if not found return nil, NOENT
+func (d *Dir) searchFileInDirItems(name string) (Node, error) {
+	fs.Debugf("vfs::dir::searchFileInDirItems", " leaf=%v nb of items=%v", path.Join(d.path, name), len(d.items))
+	item, ok := d.items[name]
+
+	if ok {
+		return item, nil
+	}
 
 	if !ok && d.vfs.Opt.CaseInsensitive {
-		leafLower := strings.ToLower(leaf)
+		leafLower := strings.ToLower(name)
 		for name, node := range d.items {
 			if strings.ToLower(name) == leafLower {
 				if ok {
 					// duplicate case insensitive match is an error
-					return nil, errors.Errorf("duplicate filename %q detected with --vfs-case-insensitive set", leaf)
+					return nil, errors.Errorf("duplicate filename %q detected with --vfs-case-insensitive set", name)
 				}
 				// found a case insensitive match
-				ok = true
-				item = node
+				return node, nil
 			}
 		}
 	}
 
-	if !ok {
-		return nil, ENOENT
-	}
-	return item, nil
+	return nil, ENOENT
 }
 
 // Check to see if a directory is empty
@@ -796,7 +858,7 @@ func (d *Dir) cachedNode(relativePath string) Node {
 //
 // Stat need not to handle the names "." and "..".
 func (d *Dir) Stat(name string) (node Node, err error) {
-	// fs.Debugf(path, "Dir.Stat")
+	//fs.Debugf(d, "Dir.Stat name=%s", name)
 	node, err = d.stat(name)
 	if err != nil {
 		if err != ENOENT {
@@ -804,7 +866,7 @@ func (d *Dir) Stat(name string) (node Node, err error) {
 		}
 		return nil, err
 	}
-	// fs.Debugf(path, "Dir.Stat OK")
+	fs.Debugf(d, "Dir.Stat OK")
 	return node, nil
 }
 
