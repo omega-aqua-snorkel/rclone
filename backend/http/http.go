@@ -6,6 +6,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"mime"
 	"net/http"
@@ -91,6 +92,11 @@ If you set this option, rclone will not do the HEAD request.  This will mean
 `,
 			Default:  false,
 			Advanced: true,
+		}, {
+			Name:     "goindex_drive_idx",
+			Help:     "Index number of the drive on a GoIndex http backend. Only to be used with GoIndex sites",
+			Default:  -1,
+			Advanced: true,
 		}},
 	}
 	fs.Register(fsi)
@@ -98,10 +104,11 @@ If you set this option, rclone will not do the HEAD request.  This will mean
 
 // Options defines the configuration for this backend
 type Options struct {
-	Endpoint string          `config:"url"`
-	NoSlash  bool            `config:"no_slash"`
-	NoHead   bool            `config:"no_head"`
-	Headers  fs.CommaSepList `config:"headers"`
+	Endpoint          string          `config:"url"`
+	NoSlash           bool            `config:"no_slash"`
+	NoHead            bool            `config:"no_head"`
+	GoIndexDriveIndex int             `config:"goindex_drive_idx"`
+	Headers           fs.CommaSepList `config:"headers"`
 }
 
 // Fs stores the interface to the remote HTTP files
@@ -153,6 +160,9 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	if !strings.HasSuffix(opt.Endpoint, "/") {
 		opt.Endpoint += "/"
+	}
+	if opt.GoIndexDriveIndex >= 0 {
+		opt.Endpoint += strconv.Itoa(opt.GoIndexDriveIndex) + ":/"
 	}
 
 	// Parse the endpoint and stick the root onto it
@@ -246,6 +256,9 @@ func (f *Fs) Features() *fs.Features {
 
 // Precision is the remote http file system's modtime precision, which we have no way of knowing. We estimate at 1s
 func (f *Fs) Precision() time.Duration {
+	if f.opt.GoIndexDriveIndex >= 0 { // uses precision of milliseconds just like Google Drive
+		return time.Millisecond
+	}
 	return time.Second
 }
 
@@ -358,6 +371,36 @@ func parse(base *url.URL, in io.Reader) (names []string, err error) {
 	return names, nil
 }
 
+type GoIndexFile struct {
+	Id           string `json:"id"`
+	MimeType     string `json:"mimeType"`
+	ModifiedTime string `json:"modifiedTime"`
+	Name         string `json:"name"`
+	// don't know why, but this is a string instead of an int64 (against gdrive doc)
+	Size          string `json:"size"`
+	ThumbnailLink string `json:"thumbnailLink"`
+}
+
+type GoIndexResults struct {
+	Data struct {
+		Files []GoIndexFile `json:"files"`
+	} `json:"data"`
+}
+
+// parser for GoIndex remotes
+func parseGoIndex(u *url.URL, in io.Reader) (names []string, err error) {
+	var results GoIndexResults
+	dec := json.NewDecoder(in)
+	err = dec.Decode(&results)
+	if err != nil {
+		return nil, err
+	}
+	for _, goIndexFile := range results.Data.Files {
+		names = append(names, goIndexFile.Name)
+	}
+	return names, nil
+}
+
 // Adds the configured headers to the request if any
 func addHeaders(req *http.Request, opt *Options) {
 	for i := 0; i < len(opt.Headers); i += 2 {
@@ -383,7 +426,13 @@ func (f *Fs) readDir(ctx context.Context, dir string) (names []string, err error
 		return nil, errors.Errorf("internal error: readDir URL %q didn't end in /", URL)
 	}
 	// Do the request
-	req, err := http.NewRequestWithContext(ctx, "GET", URL, nil)
+	reqMethod := "GET"
+	var body io.Reader = nil
+	if f.opt.GoIndexDriveIndex >= 0 {
+		reqMethod = "POST"
+		body = strings.NewReader(`{"q":""}`)
+	}
+	req, err := http.NewRequestWithContext(ctx, reqMethod, URL, body)
 	if err != nil {
 		return nil, errors.Wrap(err, "readDir failed")
 	}
@@ -404,6 +453,14 @@ func (f *Fs) readDir(ctx context.Context, dir string) (names []string, err error
 	switch contentType {
 	case "text/html":
 		names, err = parse(u, res.Body)
+		if err != nil {
+			return nil, errors.Wrap(err, "readDir")
+		}
+	case "text/plain":
+		if f.opt.GoIndexDriveIndex < 0 {
+			return nil, errors.Errorf("invalid response from non-GoIndex")
+		}
+		names, err = parseGoIndex(u, res.Body)
 		if err != nil {
 			return nil, errors.Wrap(err, "readDir")
 		}
@@ -455,7 +512,11 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
 					add(file)
 				case fs.ErrorNotAFile:
 					// ...found a directory not a file
-					add(fs.NewDir(remote, timeUnset))
+					if f.opt.GoIndexDriveIndex >= 0 { // since goindexes are based on google drive, this is accurate
+						add(fs.NewDir(remote, file.modTime))
+					} else {
+						add(fs.NewDir(remote, timeUnset))
+					}
 				default:
 					fs.Debugf(remote, "skipping because of error: %v", err)
 				}
@@ -531,14 +592,18 @@ func (o *Object) url() string {
 
 // stat updates the info field in the Object
 func (o *Object) stat(ctx context.Context) error {
-	if o.fs.opt.NoHead {
+	if o.fs.opt.NoHead && o.fs.opt.GoIndexDriveIndex < 0 {
 		o.size = -1
 		o.modTime = timeUnset
 		o.contentType = fs.MimeType(ctx, o)
 		return nil
 	}
 	url := o.url()
-	req, err := http.NewRequestWithContext(ctx, "HEAD", url, nil)
+	reqMethod := "HEAD"
+	if o.fs.opt.GoIndexDriveIndex >= 0 {
+		reqMethod = "POST"
+	}
+	req, err := http.NewRequestWithContext(ctx, reqMethod, url, nil)
 	if err != nil {
 		return errors.Wrap(err, "stat failed")
 	}
@@ -551,20 +616,37 @@ func (o *Object) stat(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "failed to stat")
 	}
-	t, err := http.ParseTime(res.Header.Get("Last-Modified"))
-	if err != nil {
-		t = timeUnset
+	var (
+		fSize int64
+		fTime time.Time
+		fType string
+	)
+	if o.fs.opt.GoIndexDriveIndex >= 0 {
+		var fInfo GoIndexFile
+		dec := json.NewDecoder(res.Body)
+		dec.Decode(&fInfo)
+		fSize = parseInt64(fInfo.Size, -1)
+		fTime, err = time.Parse(time.RFC3339, fInfo.ModifiedTime)
+		fType = fInfo.MimeType
+	} else {
+		fSize = parseInt64(res.Header.Get("Content-Length"), -1)
+		fTime, err = http.ParseTime(res.Header.Get("Last-Modified"))
+		fType = res.Header.Get("Content-Type")
 	}
-	o.size = parseInt64(res.Header.Get("Content-Length"), -1)
-	o.modTime = t
-	o.contentType = res.Header.Get("Content-Type")
+	if err != nil {
+		fTime = timeUnset
+	}
+	o.size = fSize
+	o.modTime = fTime
+	o.contentType = fType
 	// If NoSlash is set then check ContentType to see if it is a directory
-	if o.fs.opt.NoSlash {
+	if o.fs.opt.NoSlash || o.fs.opt.GoIndexDriveIndex >= 0 {
 		mediaType, _, err := mime.ParseMediaType(o.contentType)
 		if err != nil {
 			return errors.Wrapf(err, "failed to parse Content-Type: %q", o.contentType)
 		}
-		if mediaType == "text/html" {
+		if o.fs.opt.NoSlash && mediaType == "text/html" ||
+			o.fs.opt.GoIndexDriveIndex >= 0 && mediaType == "application/vnd.google-apps.folder" {
 			return fs.ErrorNotAFile
 		}
 	}
