@@ -6,6 +6,7 @@
 package cmount
 
 import (
+	"context"
 	"io"
 	"os"
 	"path"
@@ -14,7 +15,6 @@ import (
 	"time"
 
 	"github.com/billziss-gh/cgofuse/fuse"
-	"github.com/pkg/errors"
 	"github.com/rclone/rclone/cmd/mountlib"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/log"
@@ -551,7 +551,18 @@ func (fsys *FS) Setxattr(path string, name string, value []byte, flags int) (err
 
 // Getxattr gets extended attributes.
 func (fsys *FS) Getxattr(path string, name string) (errc int, value []byte) {
-	return -fuse.ENOSYS, nil
+	defer log.Trace(path, "name=%q", name)("errc=%d", &errc)
+
+	node, errc := fsys.lookupNode(path)
+	if errc != 0 {
+		return
+	}
+
+	value, err := node.Getxattr(context.TODO(), name)
+	if err != nil {
+		return translateError(err), nil
+	}
+	return
 }
 
 // Removexattr removes extended attributes.
@@ -561,40 +572,18 @@ func (fsys *FS) Removexattr(path string, name string) (errc int) {
 
 // Listxattr lists extended attributes.
 func (fsys *FS) Listxattr(path string, fill func(name string) bool) (errc int) {
-	return -fuse.ENOSYS
-}
+	defer log.Trace(path, "")("errc=%d", &errc)
 
-// Translate errors from mountlib
-func translateError(err error) (errc int) {
-	if err == nil {
-		return 0
+	node, errc := fsys.lookupNode(path)
+	if errc != 0 {
+		return errc
 	}
-	switch errors.Cause(err) {
-	case vfs.OK:
-		return 0
-	case vfs.ENOENT, fs.ErrorDirNotFound, fs.ErrorObjectNotFound:
-		return -fuse.ENOENT
-	case vfs.EEXIST, fs.ErrorDirExists:
-		return -fuse.EEXIST
-	case vfs.EPERM, fs.ErrorPermissionDenied:
-		return -fuse.EPERM
-	case vfs.ECLOSED:
-		return -fuse.EBADF
-	case vfs.ENOTEMPTY:
-		return -fuse.ENOTEMPTY
-	case vfs.ESPIPE:
-		return -fuse.ESPIPE
-	case vfs.EBADF:
-		return -fuse.EBADF
-	case vfs.EROFS:
-		return -fuse.EROFS
-	case vfs.ENOSYS, fs.ErrorNotImplemented:
-		return -fuse.ENOSYS
-	case vfs.EINVAL:
-		return -fuse.EINVAL
+
+	err := node.Listxattr(context.TODO(), fill)
+	if err != nil {
+		return translateError(err)
 	}
-	fs.Errorf(nil, "IO error: %v", err)
-	return -fuse.EIO
+	return 0
 }
 
 // Translate Open Flags from FUSE to os (as used in the vfs layer)

@@ -2,14 +2,17 @@ package vfs
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pkg/errors"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/hash"
 	"github.com/rclone/rclone/fs/log"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/vfs/vfscommon"
@@ -793,4 +796,50 @@ func (f *File) Truncate(size int64) (err error) {
 		return fh.Truncate(size)
 	}
 	return nil
+}
+
+// Getxattr gets extended attributes.
+//
+// Note: If we end up adding many different xattrs, rewrite this function into
+// something more extensible.
+func (f *File) Getxattr(ctx context.Context, name string) (value []byte, err error) {
+	obj := f.getObject()
+
+	if name == "user.mime_type" {
+		return []byte(fs.MimeType(ctx, obj)), nil
+	}
+
+	hashName := strings.TrimPrefix(name, "user.checksum.")
+	if hashName != name {
+		hashType := hash.None
+		err = hashType.Set(hashName)
+		if err != nil {
+			return nil, ENOATTR
+		}
+
+		var h string
+		h, err = obj.Hash(ctx, hashType)
+		if err != nil {
+			return
+		}
+		value = []byte(h)
+		return
+	}
+
+	return nil, ENOATTR
+}
+
+// Listxattr lists extended attributes.
+func (f *File) Listxattr(_ context.Context, fill func(name string) bool) (err error) {
+	for _, hashType := range f.getObject().Fs().Hashes().Array() {
+		if !fill(fmt.Sprintf("user.checksum.%s", hashType.String())) {
+			return ERANGE
+		}
+	}
+
+	if !fill("user.mime_type") {
+		return ERANGE
+	}
+
+	return
 }

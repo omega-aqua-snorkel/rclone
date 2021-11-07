@@ -20,6 +20,8 @@ const (
 	EBADF
 	EROFS
 	ENOSYS
+	ENOATTR
+	ERANGE
 )
 
 // Errors which have exact counterparts in os
@@ -38,6 +40,8 @@ var errorNames = []string{
 	EBADF:     "Bad file descriptor",
 	EROFS:     "Read only file system",
 	ENOSYS:    "Function not implemented",
+	ENOATTR:   "No such attribute",
+	ERANGE:    "Result too large",
 }
 
 // Error renders the error as a string

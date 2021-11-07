@@ -1067,3 +1067,13 @@ func (d *Dir) Fs() fs.Fs {
 func (d *Dir) Truncate(size int64) error {
 	return ENOSYS
 }
+
+// Getxattr gets extended attributes.
+func (d *Dir) Getxattr(context.Context, string) ([]byte, error) {
+	return nil, ENOATTR
+}
+
+// Listxattr lists extended attributes.
+func (d *Dir) Listxattr(context.Context, func(name string) bool) error {
+	return nil
+}
