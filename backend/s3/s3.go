@@ -18,6 +18,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"regexp"
 	"sort"
@@ -33,12 +34,14 @@ import (
 	"github.com/aws/aws-sdk-go/aws/corehandlers"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/credentials/ec2rolecreds"
+	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/defaults"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/sts"
 	"github.com/ncw/swift/v2"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
@@ -2925,6 +2928,14 @@ func s3Connection(ctx context.Context, opt *Options, client *http.Client) (*s3.S
 
 		// Pick up IAM role if we're in an ECS task
 		defaults.RemoteCredProvider(*def.Config, def.Handlers),
+
+		// WebIdentityRole if we're in EKS
+		stscreds.NewWebIdentityRoleProvider(
+			sts.New(awsSession),
+			os.Getenv("AWS_ROLE_ARN"),
+			"rclone-session",
+			os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE"),
+		),
 
 		// Pick up IAM role in case we're on EC2
 		&ec2rolecreds.EC2RoleProvider{
