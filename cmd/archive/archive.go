@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"sort"
+	"errors"
+	"time"
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
@@ -117,7 +119,47 @@ func GetRemoteFileInfo(ctx context.Context, src fs.Fs) ArchivesFileInfoList {
 
 // test function, list files in src as array of archives.FileInfo
 
-func list_test(ctx context.Context, src fs.Fs,srcName string,dst fs.Fs,dstName string) error {
+func check_fs(ctx context.Context, remote string) (fs.Fs,string,error){
+	var err error
+	// check remote
+	dst,dstFile := cmd.NewFsFile(remote)
+	_, err = dst.NewObject(ctx, dstFile)
+	if err == nil {
+		// its a file
+		return dst,dstFile,nil
+	} else if errors.Is(err, fs.ErrorIsDir) {
+		// it's a directory
+		return dst,"",nil
+	} else if ! errors.Is(err, fs.ErrorObjectNotFound) {
+		return dst,"",fmt.Errorf("%v",err)
+	}
+	// remote failed,check parent
+	parent:=path.Dir(remote)
+	parentFile:=path.Base(remote)
+	pDst,_ := cmd.NewFsFile(parent)
+	_, err = pDst.NewObject(ctx, "")
+	if errors.Is(err, fs.ErrorIsDir) {
+		// parent it's a directory
+		return pDst,parentFile,nil
+	} else {
+		return dst,"",fmt.Errorf("%v",err)
+	}
+}
+
+
+func list_test(ctx context.Context, src fs.Fs,dstRemote string) error {
+	// check dst
+	if dstRemote != "" {
+		dst,dstFile,err:= check_fs(ctx,dstRemote)
+		// should create an io.WriteCloser for dst here
+		if err != nil {
+			return fmt.Errorf("Unable to use destination, %v",err)
+		}else{
+			fmt.Printf("Destination not implemented: Root:=%s, File=%s\n",dst.Root(),dstFile)
+		}
+	}
+	//
+
 	items:=GetRemoteFileInfo(ctx,src)
 	for _, item := range items {
 		operations.SyncFprintf(os.Stdout, "%s\n",item.NameInArchive)
@@ -127,27 +169,11 @@ func list_test(ctx context.Context, src fs.Fs,srcName string,dst fs.Fs,dstName s
 
 // actual function that creates the archive, only to stdout at the moment
 
-func create_archive(ctx context.Context, src fs.Fs,dst fs.Fs) error{
+func create_archive(ctx context.Context, src fs.Fs, dstRemote string) error{
 	var files ArchivesFileInfoList
 	var compArchive archives.CompressedArchive
-	var dstWriter io.WriteCloser
-	// get fileinfo array
-        walk.Walk(ctx, src, "", false, -1,func(path string, entries fs.DirEntries, err error) error{
-                entries.ForObject(func(o fs.Object) {
-			fi:=DirEntryToFileInfo(ctx,o)
-			files = append(files, fi)
-                })
-                return nil
-        })
-	// dort fileinfo array
-	sort.Stable(files)
-	// leave if no files
-	if files.Len() == 0 {
-		return fmt.Errorf("No files to found in source")
-	}
-
 	// get archive format
-	switch format{
+	switch strings.ToLower(format){
 	case "tar":
 		compArchive = archives.CompressedArchive{
 			Archival:    archives.Tar{},
@@ -199,16 +225,37 @@ func create_archive(ctx context.Context, src fs.Fs,dst fs.Fs) error{
 	default:
 		return fmt.Errorf("Invalid format: %s",format)
 	}
-	// create destination
-	if dst != nil {
-		// should create an io.WriteCloser for dst here
-		return fmt.Errorf("Write to destination not implemented")
-	} else {
-		dstWriter=os.Stdout
+	// get source files
+        walk.Walk(ctx, src, "", false, -1,func(path string, entries fs.DirEntries, err error) error{
+                entries.ForObject(func(o fs.Object) {
+			fi:=DirEntryToFileInfo(ctx,o)
+			files = append(files, fi)
+                })
+                return nil
+        })
+	// sort fource files
+	sort.Stable(files)
+	// leave if no files
+	if files.Len() == 0 {
+		return fmt.Errorf("No files to found in source")
 	}
-
-	// start archive
-	return compArchive.Archive(ctx, dstWriter, files)
+	// create destination
+	if dstRemote != "" {
+		dst,dstFile,err:= check_fs(ctx,dstRemote)
+		if err != nil {
+			return fmt.Errorf("Unable to use destination, %v",err)
+		}
+		// create io.Pipe
+		pipeReader, pipeWriter := io.Pipe()
+		go func() {
+			err := compArchive.Archive(ctx, pipeWriter, files)
+		   	pipeWriter.CloseWithError(err)
+		}()
+		_,err = operations.Rcat(ctx, dst,dstFile,pipeReader, time.Now(), nil)
+		return err
+	} else {
+		return compArchive.Archive(ctx, os.Stdout, files)
+	}
 }
 
 
@@ -224,18 +271,20 @@ var commandDefinition = &cobra.Command{
 		"groups":            "Copy,Filter,Listing",
 	},
 	Run: func(command *cobra.Command, args []string) {
-		var src,dst fs.Fs
+		var src fs.Fs
+		var dstRemote string
 		if len(args) == 1 { // source only, archive to stdout
 			src = cmd.NewFsSrc(args)
-			dst = nil
+			dstRemote=""
 		}else if len(args) == 2 {
-			src,dst = cmd.NewFsSrcDst(args)
+			src = cmd.NewFsSrc(args)
+			dstRemote=args[1]
 		}else{
 			cmd.CheckArgs(1, 2, command, args)
 		}
 		//
 		cmd.Run(false, false, command, func() error {
-			return create_archive(context.Background(), src,dst)
+			return create_archive(context.Background(), src,dstRemote)
 		})
 
 	},
