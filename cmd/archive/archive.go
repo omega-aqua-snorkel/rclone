@@ -12,6 +12,7 @@ import (
 	"sort"
 	"errors"
 	"time"
+	"regexp"
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
@@ -26,7 +27,7 @@ import (
 // Globals
 var (
 	fullpath = bool(false)
-	format = string("zip")
+	format = string("")
 )
 
 // RCloneMetadata
@@ -35,9 +36,43 @@ func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlags := commandDefinition.Flags()
 	flags.BoolVarP(cmdFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
-	flags.StringVarP(cmdFlags, &format, "format", "",format, "Compress the archive using the selected format. Valid formats: zip,tar,tar.gz,tar.bz2,tar.lz,tar.lz4,tar.xz,tar.zst,tar.br,tar.sz","")
+	flags.StringVarP(cmdFlags, &format, "format", "",format, "Compress the archive using the selected format. If not set will try and guess from extension. Valid formats: zip,tar,tar.gz,tar.bz2,tar.lz,tar.lz4,tar.xz,tar.zst,tar.br,tar.sz","")
 }
 
+func NameMatches(pattern string,name string) bool {
+	ok, _ := regexp.MatchString(pattern, name)
+	return ok
+}
+
+func GetFormatFromFile(filename string) string {
+	// make filename lowercase for checks
+	filename=strings.ToLower(filename)
+	// I think regex is better to check file extensions
+	if format != "" { 
+		// format flag set, use it
+		return format
+	}else if NameMatches("\\.(zip)$",filename) {
+		return "zip"
+	}else if NameMatches("\\.(tar)$",filename) {
+		return "tar"
+	}else if NameMatches("\\.(tar.gz|tgz|taz)$",filename) {
+		return "tar.gz"
+	}else if NameMatches("\\.(tar.bz2|tb2|tbz|tbz2|tz2)$",filename) {
+		return "tar.bz2"
+	}else if NameMatches("\\.(tar.lz)$",filename) {
+		return "tar.lz"
+	}else if NameMatches("\\.(tar.xz|txz)$",filename) {
+		return "tar.xz"
+	}else if NameMatches("\\.(tar.zst|tzst)$",filename) {
+		return "tar.zst"
+	}else if NameMatches("\\.(tar.br)$",filename) {
+		return "tar.br"
+	}else if NameMatches("\\.(tar.sz)$",filename) {
+		return "tar.sz"
+	} else {
+		return ""
+	}
+}
 
 func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object) archives.FileInfo {
 	// get entry type
@@ -74,8 +109,6 @@ func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object) archives.
 	})
 }
 
-// Test function walks fs.Fs and converts objects to archives.FileInfo array
-
 func GetRemoteFileInfo(ctx context.Context, src fs.Fs) ArchivesFileInfoList {
 	var files ArchivesFileInfoList
 	// get all file entries
@@ -90,9 +123,7 @@ func GetRemoteFileInfo(ctx context.Context, src fs.Fs) ArchivesFileInfoList {
 	return files
 }
 
-// test function, list files in src as array of archives.FileInfo
-
-func check_fs(ctx context.Context, remote string) (fs.Fs,string,error){
+func CheckFs(ctx context.Context, remote string) (fs.Fs,string,error){
 	var err error
 	// check remote
 	dst,dstFile := cmd.NewFsFile(remote)
@@ -119,10 +150,13 @@ func check_fs(ctx context.Context, remote string) (fs.Fs,string,error){
 }
 
 
-func list_test(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) error {
+func ListTest(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) error {
+	var dst fs.Fs
+	var dstFile string
+	var err error
 	// check dst
 	if dstRemote != "" {
-		dst,dstFile,err:= check_fs(ctx,dstRemote)
+		dst,dstFile,err= CheckFs(ctx,dstRemote)
 		// should create an io.WriteCloser for dst here
 		if err != nil {
 			return fmt.Errorf("Unable to use destination, %v",err)
@@ -130,6 +164,8 @@ func list_test(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) e
 			fmt.Printf("Dir destination Root=%s, File=%s\n",dst.Root(),dstFile)
 		}
 	}
+	//
+	fmt.Printf("Format from filename=%s\n",GetFormatFromFile(dstFile))
 	//
 	items:=GetRemoteFileInfo(ctx,src)
 	for _, item := range items {
@@ -140,11 +176,27 @@ func list_test(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) e
 
 // actual function that creates the archive, only to stdout at the moment
 
-func create_archive(ctx context.Context, src fs.Fs, srcFile string,dstRemote string) error{
+func CreateArchive(ctx context.Context, src fs.Fs, srcFile string,dstRemote string) error{
+	var dst fs.Fs
+	var dstFile string
+	var err error
 	var files ArchivesFileInfoList
 	var compArchive archives.CompressedArchive
+	// check id dst is valid
+	if dstRemote != "" {
+		// writing to a remote, check if valid
+		dst,dstFile,err = CheckFs(ctx,dstRemote)
+		if err != nil {
+			return fmt.Errorf("Unable to use destination, %v",err)
+		} else if dstFile == "" {
+			return fmt.Errorf("Unable to use destination, filename is missing")
+		}
+	} else {
+		dst=nil
+		dstFile=""
+	}
 	// get archive format
-	switch strings.ToLower(format){
+	switch GetFormatFromFile(dstFile){
 	case "tar":
 		compArchive = archives.CompressedArchive{
 			Archival:    archives.Tar{},
@@ -193,8 +245,10 @@ func create_archive(ctx context.Context, src fs.Fs, srcFile string,dstRemote str
 		compArchive = archives.CompressedArchive{
 			Archival:    archives.Zip{},
 		}
+	case "":
+		return fmt.Errorf("Format not set and can't be guessed from extension")
 	default:
-		return fmt.Errorf("Invalid format: %s",format)
+		return fmt.Errorf("Invalid format '%s'",format)
 	}
 	// get source files
 	files=GetRemoteFileInfo(ctx,src)
@@ -203,14 +257,7 @@ func create_archive(ctx context.Context, src fs.Fs, srcFile string,dstRemote str
 		return fmt.Errorf("No files to found in source")
 	}
 	// create destination
-	if dstRemote != "" {
-		// writing to a remote, check if valid
-		dst,dstFile,err:= check_fs(ctx,dstRemote)
-		if err != nil {
-			return fmt.Errorf("Unable to use destination, %v",err)
-		} else if dstFile == "" {
-			return fmt.Errorf("Unable to use destination, filename is missing")
-		}
+	if dst != nil {
 		// create io.Pipe
 		pipeReader, pipeWriter := io.Pipe()
 		// write to pipewriter in background
@@ -234,7 +281,42 @@ var commandDefinition = &cobra.Command{
 	Use:   "archive source:path dest:path",
 	Short: `Archive source file(s) to destination.`,
 	// Warning! "|" will be replaced by backticks below
-	Long: strings.ReplaceAll(``, "|", "`"),
+	Long: strings.ReplaceAll(`Creates an archive from the files source:path and saves the archive
+to dest:path. If dest:path is missing, it will write to the console.
+
+Valid formats for the --format flag. If format is not set it will
+guess it from the extension.
+
+	Format	  Extensions
+	------	  -----------
+	zip 	  .zip
+	tar 	  .tar
+	tar.gz 	  .tar.gz, .tgz, .taz
+	tar.bz2   .tar.bz2, .tb2, .tbz, .tbz2, .tz2
+	tar.lz	  .tar.lz
+	tar.xz	  .tar.xz, .txz
+	tar.zst	  .tar.zst, .tzst
+	tar.br	  .tar.br
+	tar.sz	  .tar.sz
+
+The --fullpath flag will set the file name in the archive to the 
+full path name. If we have a directory |/sourcedir| with the following:
+
+    file1.txt
+    dir1/file2.txt
+
+If we run the command |rclone archive /sourcedir /dest.tar.gz| the 
+contents of the archive will be:
+
+    file1.txt
+    dir1/file2.txt
+
+If we run the command |rclone archive --fullpath /sourcedir /dest.tar.gz|
+the contents of the archive will be:
+
+    sourcedir/file1.txt
+    sourcedir/dir1/file2.txt
+`, "|", "`"),
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.68",
 		"groups":            "Copy,Filter,Listing",
@@ -253,7 +335,7 @@ var commandDefinition = &cobra.Command{
 		}
 		//
 		cmd.Run(false, false, command, func() error {
-			return create_archive(context.Background(), src,srcFile,dstRemote)
+			return CreateArchive(context.Background(), src,srcFile,dstRemote)
 		})
 
 	},
