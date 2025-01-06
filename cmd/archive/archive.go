@@ -25,6 +25,7 @@ import (
 
 // Globals
 var (
+	fullpath = bool(false)
 	format = string("zip")
 )
 
@@ -33,18 +34,20 @@ var (
 func init() {
 	cmd.Root.AddCommand(commandDefinition)
 	cmdFlags := commandDefinition.Flags()
+	flags.BoolVarP(cmdFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
 	flags.StringVarP(cmdFlags, &format, "format", "",format, "Compress the archive using the selected format. Valid formats: zip,tar,tar.gz,tar.bz2,tar.lz,tar.lz4,tar.xz,tar.zst,tar.br,tar.sz","")
 }
 
 
-func DirEntryToFileInfo(ctx context.Context,entry fs.Object) archives.FileInfo {
+func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
-        name := entry.Remote()
+       	name := entry.Remote()
         size := entry.Size()
         mtime := entry.ModTime(ctx)
         isDir := reflect.TypeOf(entry).Implements(dirType)
+	if fullpath { name=path.Join(strings.TrimPrefix(src.Root(),"/"),name)  }
 	// get entry metadata, not used right now
 	// metadata,_ := fs.GetMetadata(ctx, entry)
 	//
@@ -66,39 +69,9 @@ func DirEntryToFileInfo(ctx context.Context,entry fs.Object) archives.FileInfo {
 		in = tr.Account(ctx, in).WithBuffer()
 		// RCloneFile, tr.Done() is colled in RCloneFile.Close()
 		f:=NewRCloneFile(fi,ctx,in,tr)
+		//
 		return f,nil
 	})
-}
-
-// Test function to get valid path in remote, returns valid path, missing paths
-
-func GetValidPath(ctx context.Context,remote string)(string,string,error){
-	var root,missing string
-	var err error
-	//
-	root=remote
-	missing=""
-	//
-	fmt.Printf( "Check %s\n",remote)
-	src,_ := cmd.NewFsFile(root)
-	_, err = src.List(ctx, "/")
-	// valid source
-	if err == nil {
-		fmt.Printf( "  Root=%s Missing=%s Error=%w\n",remote,"",err)
-		return remote,"",nil
-	}
-	// invalid remote, find valid one
-	for err != nil {
-		fmt.Printf( "  Root=%s Missing=%s Error=%w\n",root,missing,err)
-		missing=path.Join(path.Base(root),missing)
-		root=path.Dir(root)
-		//
-		src,_ := cmd.NewFsFile(root)
-		_, err = src.List(ctx, "/")
-	}
-	//
-	fmt.Printf( "  Root=%s Missing=%s Error=%w\n",root,missing,err)
-	return root,missing,err
 }
 
 // Test function walks fs.Fs and converts objects to archives.FileInfo array
@@ -108,7 +81,7 @@ func GetRemoteFileInfo(ctx context.Context, src fs.Fs) ArchivesFileInfoList {
 	// get all file entries
         walk.Walk(ctx, src, "", false, -1,func(path string, entries fs.DirEntries, err error) error{
                 entries.ForObject(func(o fs.Object) {
-			fi:=DirEntryToFileInfo(ctx,o)
+			fi:=DirEntryToFileInfo(ctx,src,o)
 			files = append(files, fi)
                 })
                 return nil
@@ -134,8 +107,7 @@ func check_fs(ctx context.Context, remote string) (fs.Fs,string,error){
 		return dst,"",fmt.Errorf("%v",err)
 	}
 	// remote failed,check parent
-	parent:=path.Dir(remote)
-	parentFile:=path.Base(remote)
+	parent,parentFile:=path.Split(remote)
 	pDst,_ := cmd.NewFsFile(parent)
 	_, err = pDst.NewObject(ctx, "")
 	if errors.Is(err, fs.ErrorIsDir) {
@@ -147,19 +119,18 @@ func check_fs(ctx context.Context, remote string) (fs.Fs,string,error){
 }
 
 
-func list_test(ctx context.Context, src fs.Fs,dstRemote string) error {
+func list_test(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) error {
 	// check dst
 	if dstRemote != "" {
 		dst,dstFile,err:= check_fs(ctx,dstRemote)
 		// should create an io.WriteCloser for dst here
 		if err != nil {
 			return fmt.Errorf("Unable to use destination, %v",err)
-		}else{
-			fmt.Printf("Destination not implemented: Root:=%s, File=%s\n",dst.Root(),dstFile)
+		}else if dstFile == "" { // a directory
+			fmt.Printf("Dir destination Root=%s, File=%s\n",dst.Root(),dstFile)
 		}
 	}
 	//
-
 	items:=GetRemoteFileInfo(ctx,src)
 	for _, item := range items {
 		operations.SyncFprintf(os.Stdout, "%s\n",item.NameInArchive)
@@ -169,7 +140,7 @@ func list_test(ctx context.Context, src fs.Fs,dstRemote string) error {
 
 // actual function that creates the archive, only to stdout at the moment
 
-func create_archive(ctx context.Context, src fs.Fs, dstRemote string) error{
+func create_archive(ctx context.Context, src fs.Fs, srcFile string,dstRemote string) error{
 	var files ArchivesFileInfoList
 	var compArchive archives.CompressedArchive
 	// get archive format
@@ -226,34 +197,32 @@ func create_archive(ctx context.Context, src fs.Fs, dstRemote string) error{
 		return fmt.Errorf("Invalid format: %s",format)
 	}
 	// get source files
-        walk.Walk(ctx, src, "", false, -1,func(path string, entries fs.DirEntries, err error) error{
-                entries.ForObject(func(o fs.Object) {
-			fi:=DirEntryToFileInfo(ctx,o)
-			files = append(files, fi)
-                })
-                return nil
-        })
-	// sort fource files
-	sort.Stable(files)
+	files=GetRemoteFileInfo(ctx,src)
 	// leave if no files
 	if files.Len() == 0 {
 		return fmt.Errorf("No files to found in source")
 	}
 	// create destination
 	if dstRemote != "" {
+		// writing to a remote, check if valid
 		dst,dstFile,err:= check_fs(ctx,dstRemote)
 		if err != nil {
 			return fmt.Errorf("Unable to use destination, %v",err)
+		} else if dstFile == "" {
+			return fmt.Errorf("Unable to use destination, filename is missing")
 		}
 		// create io.Pipe
 		pipeReader, pipeWriter := io.Pipe()
+		// write to pipewriter in background
 		go func() {
 			err := compArchive.Archive(ctx, pipeWriter, files)
 		   	pipeWriter.CloseWithError(err)
 		}()
+		// rcat to remote from pipereader
 		_,err = operations.Rcat(ctx, dst,dstFile,pipeReader, time.Now(), nil)
 		return err
 	} else {
+		// write to stdout
 		return compArchive.Archive(ctx, os.Stdout, files)
 	}
 }
@@ -272,19 +241,19 @@ var commandDefinition = &cobra.Command{
 	},
 	Run: func(command *cobra.Command, args []string) {
 		var src fs.Fs
-		var dstRemote string
+		var srcFile,dstRemote string
 		if len(args) == 1 { // source only, archive to stdout
-			src = cmd.NewFsSrc(args)
+			src,srcFile = cmd.NewFsFile(args[0])
 			dstRemote=""
 		}else if len(args) == 2 {
-			src = cmd.NewFsSrc(args)
+			src,srcFile = cmd.NewFsFile(args[0])
 			dstRemote=args[1]
 		}else{
 			cmd.CheckArgs(1, 2, command, args)
 		}
 		//
 		cmd.Run(false, false, command, func() error {
-			return create_archive(context.Background(), src,dstRemote)
+			return create_archive(context.Background(), src,srcFile,dstRemote)
 		})
 
 	},
