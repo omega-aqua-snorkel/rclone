@@ -11,7 +11,6 @@ import (
 
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
-        "github.com/rclone/rclone/fs/config/flags"
         "github.com/rclone/rclone/fs/filter"
   	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/accounting"
@@ -26,9 +25,6 @@ var (
 )
 
 func init() {
-	cmd.Root.AddCommand(commandDefinition)
-        cmdFlags := commandDefinition.Flags()
-        flags.BoolVarP(cmdFlags, &long_list, "long", "", long_list, "List extra attributtes", "")
 }
 
 func ExtractArchive(ctx context.Context, src fs.Fs,srcFile string,dst fs.Fs,dstFile string) error {
@@ -113,8 +109,8 @@ func ExtractArchive(ctx context.Context, src fs.Fs,srcFile string,dst fs.Fs,dstF
 
 
 
-var commandDefinition = &cobra.Command{
-	Use:   "extract source:path dest:path",
+var Command = &cobra.Command{
+	Use:   "extract [flags] <source> <destination>",
 	Short: `Extract archives from source to destination.`,
 	// Warning! "|" will be replaced by backticks below
 	Long: strings.ReplaceAll(`Extract archive contents to destination directory, will autodetect format
@@ -135,4 +131,3 @@ var commandDefinition = &cobra.Command{
 
 	},
 }
-

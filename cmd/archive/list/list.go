@@ -1,5 +1,4 @@
-// Package cat provides the cat command.
-package listarchive
+package list
 
 import (
 	"context"
@@ -25,8 +24,7 @@ var (
 )
 
 func init() {
-	cmd.Root.AddCommand(commandDefinition)
-        cmdFlags := commandDefinition.Flags()
+        cmdFlags := Command.Flags()
         flags.BoolVarP(cmdFlags, &long_list, "long", "", long_list, "List extra attributtes", "")
 }
 
@@ -84,8 +82,8 @@ func ListArchive(ctx context.Context, src fs.Fs,srcFile string) error {
 
 
 
-var commandDefinition = &cobra.Command{
-	Use:   "listarchive source:path",
+var Command = &cobra.Command{
+	Use:   "list [flags] <source>",
 	Short: `List archive contents from source.`,
 	// Warning! "|" will be replaced by backticks below
 	Long: strings.ReplaceAll(`List contents of an archive to the console, will autodetect format
@@ -105,4 +103,3 @@ var commandDefinition = &cobra.Command{
 
 	},
 }
-
