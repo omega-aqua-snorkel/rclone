@@ -74,7 +74,7 @@ func GetFormatFromFile(filename string) string {
 	}
 }
 
-func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object) archives.FileInfo {
+func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object,printMsg bool) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -105,16 +105,22 @@ func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object) archives.
 		// RCloneFile, tr.Done() is colled in RCloneFile.Close()
 		f:=NewRCloneFile(fi,ctx,in,tr)
 		//
+		if printMsg {
+			operations.SyncFprintf(os.Stdout, "a %s\n", name)
+		}else{
+			fs.Debugf(src,"Adding %s to archive",name)
+		}
+		//
 		return f,nil
 	})
 }
 
-func GetRemoteFileInfo(ctx context.Context, src fs.Fs) ArchivesFileInfoList {
+func GetRemoteFileInfo(ctx context.Context, src fs.Fs,printMsg bool) ArchivesFileInfoList {
 	var files ArchivesFileInfoList
 	// get all file entries
         walk.Walk(ctx, src, "", false, -1,func(path string, entries fs.DirEntries, err error) error{
                 entries.ForObject(func(o fs.Object) {
-			fi:=DirEntryToFileInfo(ctx,src,o)
+			fi:=DirEntryToFileInfo(ctx,src,o,printMsg)
 			files = append(files, fi)
                 })
                 return nil
@@ -167,7 +173,7 @@ func ListTest(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) er
 	//
 	fmt.Printf("Format from filename=%s\n",GetFormatFromFile(dstFile))
 	//
-	items:=GetRemoteFileInfo(ctx,src)
+	items:=GetRemoteFileInfo(ctx,src,dst!=nil)
 	for _, item := range items {
 		operations.SyncFprintf(os.Stdout, "%s\n",item.NameInArchive)
 	}
@@ -251,7 +257,7 @@ func CreateArchive(ctx context.Context, src fs.Fs, srcFile string,dstRemote stri
 		return fmt.Errorf("Invalid format '%s'",format)
 	}
 	// get source files
-	files=GetRemoteFileInfo(ctx,src)
+	files=GetRemoteFileInfo(ctx,src,dst!=nil)
 	// leave if no files
 	if files.Len() == 0 {
 		return fmt.Errorf("No files to found in source")
@@ -273,9 +279,6 @@ func CreateArchive(ctx context.Context, src fs.Fs, srcFile string,dstRemote stri
 		return compArchive.Archive(ctx, os.Stdout, files)
 	}
 }
-
-
-
 
 var commandDefinition = &cobra.Command{
 	Use:   "archive source:path dest:path",
