@@ -1,4 +1,4 @@
-// Package cat provides the cat command.
+// Package archive implements 'rclone archive'.
 package archive
 
 import (
@@ -8,17 +8,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rclone/rclone/cmd/archive/create"
-	"github.com/rclone/rclone/cmd/archive/list"
 	"github.com/rclone/rclone/cmd/archive/extract"
+	"github.com/rclone/rclone/cmd/archive/list"
 )
-
-// Globals
-var (
-	fullpath = bool(false)
-	format = string("")
-)
-
-// RCloneMetadata
 
 func init() {
 	Command.AddCommand(create.Command)
@@ -27,8 +19,7 @@ func init() {
 	cmd.Root.AddCommand(Command)
 }
 
-// archive command
-
+// Command - archive command
 var Command = &cobra.Command{
 	Use:   "archive <action> [opts] <source> [<destination>]",
 	Short: `Perform an action on an archive.`,

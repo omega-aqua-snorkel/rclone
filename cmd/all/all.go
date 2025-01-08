@@ -5,6 +5,7 @@ import (
 	// Active commands
 	_ "github.com/rclone/rclone/cmd"
 	_ "github.com/rclone/rclone/cmd/about"
+	_ "github.com/rclone/rclone/cmd/archive"
 	_ "github.com/rclone/rclone/cmd/authorize"
 	_ "github.com/rclone/rclone/cmd/backend"
 	_ "github.com/rclone/rclone/cmd/bisync"
@@ -65,5 +66,4 @@ import (
 	_ "github.com/rclone/rclone/cmd/touch"
 	_ "github.com/rclone/rclone/cmd/tree"
 	_ "github.com/rclone/rclone/cmd/version"
-	_ "github.com/rclone/rclone/cmd/archive"
 )

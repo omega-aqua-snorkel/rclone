@@ -1,25 +1,25 @@
-
 package create
 
 import (
-
+	"context"
 	"fmt"
-	"path"
 	"io"
 	"io/fs"
+	"path"
 	"strings"
-	"strconv"
 	"time"
-	"context"
-        "github.com/rclone/rclone/fs/accounting"
-	"github.com/mholt/archives"
+
 	"archive/tar"
 
+	"github.com/mholt/archives"
+	"github.com/rclone/rclone/fs/accounting"
 )
 
 // not using this, not all backends have uid/gid so is this even worth it?
 
-func MetadataToHeader(metadata map[string]string,header *tar.Header){
+/*
+
+func metadataToHeader(metadata map[string]string,header *tar.Header){
 	var val string
 	var ok bool
 	var err error
@@ -73,115 +73,109 @@ func MetadataToHeader(metadata map[string]string,header *tar.Header){
 	header.ChangeTime = ctime
 }
 
+*/
 
-// FileInfoFS
-// fs.FileInfo interface, required for mholt/archives
-
+// FileInfoFS - fs.FileInfo interface, required for mholt/archives
 type FileInfoFS interface {
 	fs.FileInfo
 }
 
-type FileInfoFSImpl struct{
-        name string
-        size int64
-        mtime time.Time
-        isDir bool
+type fileInfoFSImpl struct {
+	name   string
+	size   int64
+	mtime  time.Time
+	isDir  bool
 	header *tar.Header // hate this, just for uid/gid/gname/uname
 }
 
-func (a *FileInfoFSImpl) Name() string {
+func (a *fileInfoFSImpl) Name() string {
 	return a.name
 }
 
-func (a *FileInfoFSImpl) Size() int64 {
+func (a *fileInfoFSImpl) Size() int64 {
 	return a.size
 }
 
-func (a *FileInfoFSImpl) Mode() fs.FileMode {
+func (a *fileInfoFSImpl) Mode() fs.FileMode {
 	return fs.FileMode(a.header.Mode)
 }
 
-func (a *FileInfoFSImpl) ModTime() time.Time {
+func (a *fileInfoFSImpl) ModTime() time.Time {
 	return a.mtime
 }
 
-func (a *FileInfoFSImpl) IsDir() bool {
+func (a *fileInfoFSImpl) IsDir() bool {
 	return a.isDir
 }
 
-func (a *FileInfoFSImpl) Sys() any {
+func (a *fileInfoFSImpl) Sys() any {
 	return a.header
 }
 
-func (a *FileInfoFSImpl) String() string {
-        return fmt.Sprintf("Name=%v Size=%v IsDir=%v UID=%v GID=%v", a.Name(),a.Size(),a.IsDir(),a.header.Uid,a.header.Gid)
+func (a *fileInfoFSImpl) String() string {
+	return fmt.Sprintf("Name=%v Size=%v IsDir=%v UID=%v GID=%v", a.Name(), a.Size(), a.IsDir(), a.header.Uid, a.header.Gid)
 }
 
-// RCloneFile
-// fs.File interface, required for mholt/archives
-
+// RCloneFile -  fs.File interface, required for mholt/archives
 type RCloneFile interface {
 	fs.File
 }
 
-type RCloneFileImpl struct{
-	entry FileInfoFS
-	ctx context.Context
-	reader io.ReadCloser
+type rCloneFileImpl struct {
+	entry    FileInfoFS
+	ctx      context.Context
+	reader   io.ReadCloser
 	transfer *accounting.Transfer
-	err error
+	err      error
 }
 
-func NewRCloneFile(entry FileInfoFS,ctx context.Context,reader io.ReadCloser,transfer *accounting.Transfer) RCloneFile {
-        var f = new(RCloneFileImpl)
+// NewRCloneFile - create a fs.File compatible struct
+func NewRCloneFile(ctx context.Context, entry FileInfoFS, reader io.ReadCloser, transfer *accounting.Transfer) RCloneFile {
+	var f = new(rCloneFileImpl)
 	//
-	f.entry=entry
-	f.ctx=ctx
-	f.reader=reader
-	f.transfer=transfer
-	f.err=nil
+	f.entry = entry
+	f.ctx = ctx
+	f.reader = reader
+	f.transfer = transfer
+	f.err = nil
 	//
-        return f
+	return f
 }
 
-func (a *RCloneFileImpl) Stat() (fs.FileInfo, error){
-	return fs.FileInfo(a.entry),nil
+func (a *rCloneFileImpl) Stat() (fs.FileInfo, error) {
+	return fs.FileInfo(a.entry), nil
 }
 
-func (a *RCloneFileImpl) Read(data []byte) (int, error){
+func (a *rCloneFileImpl) Read(data []byte) (int, error) {
 	if a.reader == nil {
-		a.err=fmt.Errorf("File %s not open",a.entry.Name())
+		a.err = fmt.Errorf("file %s not open", a.entry.Name())
 		return 0, a.err
-	} else {
-		i,err:=a.reader.Read(data)
-		a.err=err
-		return i,a.err
 	}
+	i, err := a.reader.Read(data)
+	a.err = err
+	return i, a.err
 }
-func (a *RCloneFileImpl) Close() error {
+
+func (a *rCloneFileImpl) Close() error {
 	// close file
 	if a.reader == nil {
-		a.err=fmt.Errorf("File %s not open",a.entry.Name())
+		a.err = fmt.Errorf("file %s not open", a.entry.Name())
 	} else {
-		a.err=a.reader.Close()
+		a.err = a.reader.Close()
 	}
 	// close transfer
 	if a.transfer != nil {
-		a.transfer.Done(a.ctx,a.err)
+		a.transfer.Done(a.ctx, a.err)
 	}
 	return a.err
 }
 
-// RCloneOpener
-// Open the rclone file
+// RCloneOpener - Open the rclone file
+type RCloneOpener func(fi FileInfoFS) (RCloneFile, error)
 
-type RCloneOpener func(fi FileInfoFS) (RCloneFile,error)
-
-// NewArchivesFileInfo
-// Creates a archives.FileInfo from the given information
-
-func NewArchivesFileInfo(name string,size int64,mtime time.Time,isDir bool,opener RCloneOpener) archives.FileInfo {
-	var fi=new (FileInfoFSImpl)
+// NewArchivesFileInfo - Creates a archives.FileInfo from the given information
+func NewArchivesFileInfo(name string, size int64, mtime time.Time, isDir bool, opener RCloneOpener) archives.FileInfo {
+	var fi = new(fileInfoFSImpl)
 	//
 	fi.name = name
 	fi.size = size
@@ -197,23 +191,20 @@ func NewArchivesFileInfo(name string,size int64,mtime time.Time,isDir bool,opene
 	fi.header.ChangeTime = mtime
 	//
 	return archives.FileInfo{
-		FileInfo: fi,
+		FileInfo:      fi,
 		NameInArchive: name,
-		LinkTarget: "",
+		LinkTarget:    "",
 		Open: func() (fs.File, error) {
-			f,err := opener(fi)
+			f, err := opener(fi)
 			if err != nil {
 				return nil, err
-			} else {
-				return f,nil
 			}
+			return f, nil
 		},
 	}
 }
 
-// ArchivesFileInfoList
-// Array of archives.FileInfo
-
+// ArchivesFileInfoList - Array of archives.FileInfo
 type ArchivesFileInfoList []archives.FileInfo
 
 func (a ArchivesFileInfoList) Len() int {
@@ -221,18 +212,17 @@ func (a ArchivesFileInfoList) Len() int {
 }
 
 func (a ArchivesFileInfoList) Less(i, j int) bool {
-	var dir1= path.Dir(a[i].NameInArchive)
-	var dir2= path.Dir(a[j].NameInArchive)
+	var dir1 = path.Dir(a[i].NameInArchive)
+	var dir2 = path.Dir(a[j].NameInArchive)
 
 	if dir1 < dir2 {
 		return true
 	} else if dir1 > dir2 {
 		return false
-	}else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
-		return strings.Compare(a[i].NameInArchive,a[j].NameInArchive) < 0
-	} else {
-		return a[j].FileInfo.IsDir()
+	} else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
+		return strings.Compare(a[i].NameInArchive, a[j].NameInArchive) < 0
 	}
+	return a[j].FileInfo.IsDir()
 }
 
 func (a ArchivesFileInfoList) Swap(i, j int) {
