@@ -114,6 +114,8 @@ func DirEntryToFileInfo(ctx context.Context,src fs.Fs,entry fs.Object,printMsg b
 	})
 }
 
+// Walks the source and converts fs.Object to archives.FileInfo
+
 func GetRemoteFileInfo(ctx context.Context, src fs.Fs,printMsg bool) ArchivesFileInfoList {
 	var files ArchivesFileInfoList
 	// get all file entries
@@ -153,33 +155,6 @@ func CheckFs(ctx context.Context, remote string) (fs.Fs,string,error){
 		return dst,"",fmt.Errorf("%v",err)
 	}
 }
-
-
-func ListTest(ctx context.Context, src fs.Fs,srcFile string,dstRemote string) error {
-	var dst fs.Fs
-	var dstFile string
-	var err error
-	// check dst
-	if dstRemote != "" {
-		dst,dstFile,err= CheckFs(ctx,dstRemote)
-		// should create an io.WriteCloser for dst here
-		if err != nil {
-			return fmt.Errorf("Unable to use destination, %v",err)
-		}else if dstFile == "" { // a directory
-			fmt.Printf("Dir destination Root=%s, File=%s\n",dst.Root(),dstFile)
-		}
-	}
-	//
-	fmt.Printf("Format from filename=%s\n",GetFormatFromFile(dstFile))
-	//
-	items:=GetRemoteFileInfo(ctx,src,dst!=nil)
-	for _, item := range items {
-		operations.SyncFprintf(os.Stdout, "%s\n",item.NameInArchive)
-	}
-	return nil
-}
-
-// actual function that creates the archive, only to stdout at the moment
 
 func CreateArchive(ctx context.Context, src fs.Fs, srcFile string,dstRemote string) error{
 	var dst fs.Fs

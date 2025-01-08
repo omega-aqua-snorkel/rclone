@@ -37,7 +37,7 @@ func ListArchive(ctx context.Context, src fs.Fs,srcFile string) error {
 	// get object
 	srcObj, err = src.NewObject(ctx, srcFile)
 	if err != nil {
-		return fmt.Errorf("Error opening file, %v",err)
+		return fmt.Errorf("Source is not a file, %v",err)
 	}
 	// open source
 	tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
