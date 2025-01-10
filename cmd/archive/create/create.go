@@ -208,18 +208,22 @@ func checkValidDestination(ctx context.Context,dst fs.Fs,dstFile string)(fs.Fs,s
 		// we are overwriting the file, all is well
 		return dst,dstFile,nil
 	}else if errors.Is(err, fs.ErrorIsDir) {
-		// parent is a directory
-		// file does not exist, we are creating is, all is good
+		// dst is a directory
+		// we need a file name, not good
 		return dst, dstFile,fmt.Errorf("%s is a directory",dst.Root())
 	}else if !errors.Is(err, fs.ErrorObjectNotFound) {
 		// dst is a directory (we need a filename) or some other error happened
 		// not good, leave
-		return dst,"",err
+		return dst,"",fmt.Errorf("invalid destination: %w",err)
 	}
 	// if we are here dst points to a non existing path
 	// we must check if parent is a valid directory
 	parentDir, parentFile := path.Split(dst.Root())
-	dst, dstFile = cmd.NewFsFile(parentDir)
+	if dst.Features().IsLocal {
+		dst, dstFile = cmd.NewFsFile(parentDir)
+	}else{
+		dst, dstFile = cmd.NewFsFile(fmt.Sprintf("%s:%s",dst.Name(),parentDir))
+	}
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// parent is a directory
@@ -231,7 +235,7 @@ func checkValidDestination(ctx context.Context,dst fs.Fs,dstFile string)(fs.Fs,s
 		return dst, parentFile, nil
 	}
 	// something else happened
-	return dst,parentFile,err
+	return dst,parentFile,fmt.Errorf("invalid parent dir %s: %w",parentDir,err)
 }
 
 // CreateArchive - compresses/archive source to destination
@@ -281,70 +285,3 @@ func CreateArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs,dst
 	// write to stdout
 	return compArchive.Archive(ctx, os.Stdout, list)
 }
-
-/*
-
-// Command - create
-var Command = &cobra.Command{
-	Use:   "create [flags] <source> [<destination>]",
-	Short: `Archive source file(s) to destination.`,
-	// Warning! "|" will be replaced by backticks below
-	Long: strings.ReplaceAll(`Creates an archive from the files source:path and saves the archive
-to dest:path. If dest:path is missing, it will write to the console.
-
-Valid formats for the --format flag. If format is not set it will
-guess it from the extension.
-
-	Format	  Extensions
-	------	  -----------
-	zip 	  .zip
-	tar 	  .tar
-	tar.gz 	  .tar.gz, .tgz, .taz
-	tar.bz2   .tar.bz2, .tb2, .tbz, .tbz2, .tz2
-	tar.lz	  .tar.lz
-	tar.xz	  .tar.xz, .txz
-	tar.zst	  .tar.zst, .tzst
-	tar.br	  .tar.br
-	tar.sz	  .tar.sz
-
-The --fullpath flag will set the file name in the archive to the 
-full path name. If we have a directory |/sourcedir| with the following:
-
-    file1.txt
-    dir1/file2.txt
-
-If we run the command |rclone archive /sourcedir /dest.tar.gz| the 
-contents of the archive will be:
-
-    file1.txt
-    dir1/file2.txt
-
-If we run the command |rclone archive --fullpath /sourcedir /dest.tar.gz|
-the contents of the archive will be:
-
-    sourcedir/file1.txt
-    sourcedir/dir1/file2.txt
-`, "|", "`"),
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.70",
-		"groups":            "Copy,Filter,Listing",
-	},
-	Run: func(command *cobra.Command, args []string) {
-		var src,dst fs.Fs
-		var srcFile, dstFile string
-		if len(args) == 1 { // source only, archive to stdout
-			src, srcFile = cmd.NewFsFile(args[0])
-		} else if len(args) == 2 {
-			src, srcFile = cmd.NewFsFile(args[0])
-			dst, dstFile = cmd.NewFsFile(args[1])
-		} else {
-			cmd.CheckArgs(1, 2, command, args)
-		}
-		//
-		cmd.Run(false, false, command, func() error {
-			return CreateArchive(context.Background(), src, srcFile, dst,dstFile)
-		})
-	},
-}
-
-*/
