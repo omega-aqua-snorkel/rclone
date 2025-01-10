@@ -266,7 +266,7 @@ func CreateArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs,dst
 	if err != nil {
 		return err
 	} else if list.Len() == 0 {
-		return fmt.Errorf("no files to found in source")
+		return fmt.Errorf("no files found in source")
 	}
 	sort.Stable(list)
 	// create destination

@@ -25,7 +25,7 @@ func ListArchive(ctx context.Context, src fs.Fs, srcFile string,longList bool) e
 	// get object
 	srcObj, err = src.NewObject(ctx, srcFile)
 	if err != nil {
-		return fmt.Errorf("source is not a file, %v", err)
+		return fmt.Errorf("source is not a file, %w", err)
 	}
 	// open source, removed the accounting code because extract
 	// needs a SeekableFile (io.Seeker/io.ReadAt) for zip/7z
@@ -51,7 +51,7 @@ func ListArchive(ctx context.Context, src fs.Fs, srcFile string,longList bool) e
 	format, _, err := archives.Identify(ctx, "", in)
 	//
 	if err != nil {
-		return fmt.Errorf("failed to open check file type, %v", err)
+		return fmt.Errorf("failed to open check file type, %wq", err)
 	}
 	fs.Debugf(src, "Listing %s/%s, format %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."))
 	// check if extract is supported by format

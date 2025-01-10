@@ -32,7 +32,7 @@ func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	} else if errors.Is(err, fs.ErrorObjectNotFound) {
 		return fmt.Errorf("source not found")
 	} else if err != nil {
-		return fmt.Errorf("unable to access source, %v", err)
+		return fmt.Errorf("unable to access source, %w", err)
 	}
 	fs.Debugf(src, "Source archive file: %s/%s", src.Root(), srcFile)
 	// get dst object
@@ -42,7 +42,7 @@ func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	} else if errors.Is(err, fs.ErrorObjectNotFound) {
 		return fmt.Errorf("destination not found")
 	} else if !errors.Is(err, fs.ErrorIsDir) {
-		return fmt.Errorf("unable to access destination, %v", err)
+		return fmt.Errorf("unable to access destination, %w", err)
 	}
 	// clear error, previous ckeck shoud end with err==fs.ErrorIsDir
 	fs.Debugf(dst, "Destination for extracted files: %s", dst.Root())
@@ -66,7 +66,7 @@ func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	format, _, err := archives.Identify(ctx, "", in)
 	//
 	if err != nil {
-		return fmt.Errorf("failed to open check file type, %v", err)
+		return fmt.Errorf("failed to open check file type, %w", err)
 	}
 	fs.Debugf(src, "Extract %s/%s, format %s to %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."), dst.Root())
 
@@ -107,30 +107,3 @@ func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	//
 	return err
 }
-
-/*
-
-// Command - extract Command
-var Command = &cobra.Command{
-	Use:   "extract [flags] <source> <destination>",
-	Short: `Extract archives from source to destination.`,
-	// Warning! "|" will be replaced by backticks below
-	Long: strings.ReplaceAll(`Extract archive contents to destination directory, will autodetect format
-`, "|", "`"),
-	Annotations: map[string]string{
-		"versionIntroduced": "v1.70",
-		"groups":            "Copy,Filter,Listing",
-	},
-	Run: func(command *cobra.Command, args []string) {
-		cmd.CheckArgs(2, 2, command, args)
-		//
-		src, srcFile := cmd.NewFsFile(args[0])
-		dst, dstFile := cmd.NewFsFile(args[1])
-		//
-		cmd.Run(false, false, command, func() error {
-			return extractArchive(context.Background(), src, srcFile, dst, dstFile)
-		})
-
-	},
-}
-*/
