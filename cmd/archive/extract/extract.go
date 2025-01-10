@@ -5,24 +5,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path"
 	"strings"
 
 	"github.com/mholt/archives"
-	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/fs"
-	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/operations"
-	"github.com/spf13/cobra"
+	"github.com/rclone/rclone/cmd/archive/files"
+
 )
 
 func init() {
 }
 
-func extractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string) error {
+// ExtractArchive -- extracts files from source to destination
+func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string) error {
 	var srcObj fs.Object
 	var err error
 	//
@@ -47,23 +45,25 @@ func extractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 		return fmt.Errorf("unable to access destination, %v", err)
 	}
 	// clear error, previous ckeck shoud end with err==fs.ErrorIsDir
-	err = nil
 	fs.Debugf(dst, "Destination for extracted files: %s", dst.Root())
-	// open source
-	tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
-	defer tr.Done(ctx, err)
-	//
-	var options []fs.OpenOption
-	for _, option := range fs.GetConfig(ctx).DownloadHeaders {
-		options = append(options, option)
-	}
-	var in io.Reader
-	in, err = operations.Open(ctx, srcObj, options...)
+	/*
+		// open source
+		tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
+		defer tr.Done(ctx, err)
+		//
+		var options []fs.OpenOption
+		for _, option := range fs.GetConfig(ctx).DownloadHeaders {
+			options = append(options, option)
+		}
+		var in io.Reader
+		in, err = operations.Open(ctx, srcObj, options...)
+	*/
+	in, err := files.NewSeekableFile(ctx, srcObj, 5)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", srcFile, err)
 	}
 	// identify format
-	format, in, err := archives.Identify(ctx, "", in)
+	format, _, err := archives.Identify(ctx, "", in)
 	//
 	if err != nil {
 		return fmt.Errorf("failed to open check file type, %v", err)
@@ -79,6 +79,8 @@ func extractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	err = ex.Extract(ctx, in, func(ctx context.Context, f archives.FileInfo) error {
 		// check if file should be extracted
 		if !fi.Include(f.NameInArchive, f.Size(), f.ModTime(), fs.Metadata{}) {
+			return nil
+		} else if f.IsDir() {
 			return nil
 		}
 		// create directory if needed
@@ -97,7 +99,7 @@ func extractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 		// extract the file to destination
 		_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
 		if err == nil {
-			operations.SyncFprintf(os.Stdout, "x %s\n", f.NameInArchive)
+			fs.Infof(src, "extracted %s\n", f.NameInArchive)
 		}
 		//
 		return err
@@ -105,6 +107,8 @@ func extractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	//
 	return err
 }
+
+/*
 
 // Command - extract Command
 var Command = &cobra.Command{
@@ -114,7 +118,7 @@ var Command = &cobra.Command{
 	Long: strings.ReplaceAll(`Extract archive contents to destination directory, will autodetect format
 `, "|", "`"),
 	Annotations: map[string]string{
-		"versionIntroduced": "v1.68",
+		"versionIntroduced": "v1.70",
 		"groups":            "Copy,Filter,Listing",
 	},
 	Run: func(command *cobra.Command, args []string) {
@@ -129,3 +133,4 @@ var Command = &cobra.Command{
 
 	},
 }
+*/

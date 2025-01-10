@@ -6,73 +6,154 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	stdfs "io/fs"
 	"os"
 	"path"
 	"reflect"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
-
 	"github.com/mholt/archives"
 	"github.com/rclone/rclone/cmd"
+	"github.com/rclone/rclone/cmd/archive/files"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
-	"github.com/rclone/rclone/fs/config/flags"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/walk"
-	"github.com/spf13/cobra"
 )
 
 // Globals
 var (
-	fullpath = bool(false)
-	format   = string("")
+	archiveFormats = map[string]archives.CompressedArchive{
+		"tar": archives.CompressedArchive{
+			Archival: archives.Tar{},
+		},
+		"tar.gz": archives.CompressedArchive{
+			Compression: archives.Gz{},
+			Archival:    archives.Tar{},
+		},
+		"tar.bz2": archives.CompressedArchive{
+			Compression: archives.Bz2{},
+			Archival:    archives.Tar{},
+		},
+		"tar.lz": archives.CompressedArchive{
+			Compression: archives.Lzip{},
+			Archival:    archives.Tar{},
+		},
+		"tar.lz4": archives.CompressedArchive{
+			Compression: archives.Lz4{},
+			Archival:    archives.Tar{},
+		},
+		"tar.xz": archives.CompressedArchive{
+			Compression: archives.Xz{},
+			Archival:    archives.Tar{},
+		},
+		"tar.zst": archives.CompressedArchive{
+			Compression: archives.Zstd{},
+			Archival:    archives.Tar{},
+		},
+		"tar.br": archives.CompressedArchive{
+			Compression: archives.Brotli{},
+			Archival:    archives.Tar{},
+		},
+		"tar.sz": archives.CompressedArchive{
+			Compression: archives.Sz{},
+			Archival:    archives.Tar{},
+		},
+		"zip": archives.CompressedArchive{
+			Archival: archives.Zip{},
+		},
+	}
+	archiveExtensions = map[string]string{
+		// zip
+		"*.zip": "zip",
+		// tar
+		"*.tar": "tar",
+		// tar.gz
+		"*.tar.gz": "tar.gz",
+		"*.tgz": "tar.gz",
+		"*.taz": "tar.gz",
+		// tar.bz2
+		"*.tar.bz2": "tar.bz2",
+		"*.tb2": "tar.bz2",
+		"*.tbz": "tar.bz2",
+		"*.tbz2": "tar.bz2",
+		"*.tz2": "tar.bz2",
+		// tar.lz
+		"*.tar.lz": "tar.lz",
+		// tar.xz
+		"*.tar.xz": "tar.xz",
+		"*.txz": "tar.xz",
+		// tar.zst
+		"*.tar.zst": "tar.zst",
+		"*.tzst": "tar.zst",
+		// tar.br
+		"*.tar.br": "tar.br",
+		// tar.sz
+		"*.tar.sz": "tar.sz",
+	}
 )
 
-// RCloneMetadata
+type archivesFileInfoList []archives.FileInfo
+
+func (a archivesFileInfoList) Len() int {
+        return len(a)
+}
+
+func (a archivesFileInfoList) Less(i, j int) bool {
+        var dir1 = path.Dir(a[i].NameInArchive)
+        var dir2 = path.Dir(a[j].NameInArchive)
+
+        if dir1 < dir2 {
+                return true
+        } else if dir1 > dir2 {
+                return false
+        } else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
+                return strings.Compare(a[i].NameInArchive, a[j].NameInArchive) < 0
+        }
+        return a[j].FileInfo.IsDir()
+}
+
+func (a archivesFileInfoList) Swap(i, j int) {
+        a[i], a[j] = a[j], a[i]
+}
 
 func init() {
-	cmdFlags := Command.Flags()
-	flags.BoolVarP(cmdFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
-	flags.StringVarP(cmdFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Valid formats: zip,tar,tar.gz,tar.bz2,tar.lz,tar.lz4,tar.xz,tar.zst,tar.br,tar.sz", "")
 }
 
-func nameMatches(pattern string, name string) bool {
-	ok, _ := regexp.MatchString(pattern, name)
-	return ok
-}
-
-func getFormatFromFile(filename string) string {
+func getCompressor(format string,filename string) (archives.CompressedArchive,error) {
+	var compressor archives.CompressedArchive
+	var found bool
 	// make filename lowercase for checks
 	filename = strings.ToLower(filename)
-	// I think regex is better to check file extensions
-	if format != "" {
-		// format flag set, use it
-		return format
-	} else if nameMatches("\\.(zip)$", filename) {
-		return "zip"
-	} else if nameMatches("\\.(tar)$", filename) {
-		return "tar"
-	} else if nameMatches("\\.(tar.gz|tgz|taz)$", filename) {
-		return "tar.gz"
-	} else if nameMatches("\\.(tar.bz2|tb2|tbz|tbz2|tz2)$", filename) {
-		return "tar.bz2"
-	} else if nameMatches("\\.(tar.lz)$", filename) {
-		return "tar.lz"
-	} else if nameMatches("\\.(tar.xz|txz)$", filename) {
-		return "tar.xz"
-	} else if nameMatches("\\.(tar.zst|tzst)$", filename) {
-		return "tar.zst"
-	} else if nameMatches("\\.(tar.br)$", filename) {
-		return "tar.br"
-	} else if nameMatches("\\.(tar.sz)$", filename) {
-		return "tar.sz"
+	//
+	if format == "" {
+		// format flag not set, get format from the file extension
+		for pattern, formatName := range archiveExtensions {
+			ok,err:=path.Match(pattern,filename)
+			if err != nil {
+				// error in pattern
+				return  archives.CompressedArchive{},fmt.Errorf("invalid extension pattern '%s'", pattern)
+			}else if ok {
+				// pattern matches filename, get compressor
+				compressor, found = archiveFormats[formatName]
+				break
+			}
+		 }
+	} else{
+		// format flag set, look for it
+		compressor, found = archiveFormats[format]
 	}
-	return ""
+	//
+	if found {
+		return compressor,nil
+	} else if format == "" {
+		return archives.CompressedArchive{},fmt.Errorf("format not set and can't be guessed from extension")
+	}
+	return archives.CompressedArchive{},fmt.Errorf("invalid format '%s'", format)
 }
 
-func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, printMsg bool) archives.FileInfo {
+func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object,fullpath bool) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -86,162 +167,111 @@ func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, printMs
 	// get entry metadata, not used right now
 	// metadata,_ := fs.GetMetadata(ctx, entry)
 	//
-	return NewArchivesFileInfo(name, size, mtime, isDir, func(fi FileInfoFS) (RCloneFile, error) {
-		var err error
-		// I don't know if this is needed, just copied the open file from cat command
-		tr := accounting.Stats(ctx).NewTransfer(entry, nil)
-		var options []fs.OpenOption
-		for _, option := range fs.GetConfig(ctx).DownloadHeaders {
-			options = append(options, option)
-		}
-		var in io.ReadCloser
-		in, err = operations.Open(ctx, entry, options...)
-		if err != nil {
-			defer tr.Done(ctx, err)
-			return nil, fmt.Errorf("failed to open file %s: %w", name, err)
-		}
-		// Account and buffer the transfer
-		in = tr.Account(ctx, in).WithBuffer()
-		// RCloneFile, tr.Done() is colled in RCloneFile.Close()
-		f := NewRCloneFile(ctx, fi, in, tr)
-		//
-		if printMsg {
-			operations.SyncFprintf(os.Stdout, "a %s\n", name)
-		} else {
-			fs.Debugf(src, "Adding %s to archive", name)
-		}
-		//
-		return f, nil
-	})
+        var fi = files.NewFileInfo(name,size,mtime,isDir)
+        //
+        return archives.FileInfo{
+                FileInfo:      fi,
+                NameInArchive: name,
+                LinkTarget:    "",
+                Open: func() (stdfs.File, error) {
+			var err error
+			//
+			tr := accounting.Stats(ctx).NewTransfer(entry, nil)
+			var options []fs.OpenOption
+			for _, option := range fs.GetConfig(ctx).DownloadHeaders {
+				options = append(options, option)
+			}
+			var in io.ReadCloser
+			in, err = operations.Open(ctx, entry, options...)
+			if err != nil {
+				defer tr.Done(ctx, err)
+				return nil, fmt.Errorf("failed to open file %s: %w", name, err)
+			}
+			// Account and buffer the transfer
+			in = tr.Account(ctx, in).WithBuffer()
+			// fs.File, tr.Done() is called in fs.File.Close()
+			f := files.NewFile(ctx, fi, in, tr)
+			//
+			fs.Infof(src, "add to archive %s\n", name)
+			//
+			return f, nil
+                },
+        }
 }
 
-// Walks the source and converts fs.Object to archives.FileInfo
-
-func getRemoteFileInfo(ctx context.Context, src fs.Fs, printMsg bool) (ArchivesFileInfoList, error) {
-	var files ArchivesFileInfoList
-	// get all file entries
-	err := walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
-		entries.ForObject(func(o fs.Object) {
-			fi := dirEntryToFileInfo(ctx, src, o, printMsg)
-			files = append(files, fi)
-		})
-		return nil
-	})
-	sort.Stable(files)
-	return files, err
-}
-
-func checkFs(ctx context.Context, remote string) (fs.Fs, string, error) {
+func checkValidDestination(ctx context.Context,dst fs.Fs,dstFile string)(fs.Fs,string,error){
 	var err error
-	// check remote
-	dst, dstFile := cmd.NewFsFile(remote)
+	// check if dst + dstFile is a file
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
-		// its a file
-		return dst, dstFile, nil
-	} else if errors.Is(err, fs.ErrorIsDir) {
-		// it's a directory
-		return dst, "", nil
-	} else if !errors.Is(err, fs.ErrorObjectNotFound) {
-		return dst, "", fmt.Errorf("%v", err)
+		// dst is a valid directory, dstFile is a valid file
+		// we are overwriting the file, all is well
+		return dst,dstFile,nil
+	}else if errors.Is(err, fs.ErrorIsDir) {
+		// parent is a directory
+		// file does not exist, we are creating is, all is good
+		return dst, dstFile,fmt.Errorf("%s is a directory",dst.Root())
+	}else if !errors.Is(err, fs.ErrorObjectNotFound) {
+		// dst is a directory (we need a filename) or some other error happened
+		// not good, leave
+		return dst,"",err
 	}
-	// remote failed,check parent
-	parent, parentFile := path.Split(remote)
-	pDst, _ := cmd.NewFsFile(parent)
-	_, err = pDst.NewObject(ctx, "")
-	if errors.Is(err, fs.ErrorIsDir) {
-		// parent it's a directory
-		return pDst, parentFile, nil
+	// if we are here dst points to a non existing path
+	// we must check if parent is a valid directory
+	parentDir, parentFile := path.Split(dst.Root())
+	dst, dstFile = cmd.NewFsFile(parentDir)
+	_, err = dst.NewObject(ctx, dstFile)
+	if err == nil {
+		// parent is a directory
+		// file does not exist, we are creating is, all is good
+		return dst, parentFile,fmt.Errorf("can't create %s, %s is a file",parentFile,parentDir)
+	}else if errors.Is(err, fs.ErrorIsDir) {
+		// parent is a directory
+		// file does not exist, we are creating is, all is good
+		return dst, parentFile, nil
 	}
-	return dst, "", fmt.Errorf("%v", err)
+	// something else happened
+	return dst,parentFile,err
 }
 
-func createArchive(ctx context.Context, src fs.Fs, srcFile string, dstRemote string) error {
-	var dst fs.Fs
-	var dstFile string
+// CreateArchive - compresses/archive source to destination
+func CreateArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs,dstFile string,format string,fullpath bool) error {
 	var err error
-	var files ArchivesFileInfoList
+	var list archivesFileInfoList
 	var compArchive archives.CompressedArchive
 	// check id dst is valid
-	if dstRemote != "" {
-		// writing to a remote, check if valid
-		dst, dstFile, err = checkFs(ctx, dstRemote)
+	if dst != nil {
+		dst,dstFile,err=checkValidDestination(ctx,dst,dstFile)
 		if err != nil {
-			return fmt.Errorf("unable to use destination, %v", err)
-		} else if dstFile == "" {
-			return fmt.Errorf("unable to use destination, filename is missing")
+			return err
 		}
 	}
 	// get archive format
-	switch getFormatFromFile(dstFile) {
-	case "tar":
-		compArchive = archives.CompressedArchive{
-			Archival: archives.Tar{},
-		}
-	case "tar.gz":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Gz{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.bz2":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Bz2{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.lz":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Lzip{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.lz4":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Lz4{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.xz":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Xz{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.zst":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Zstd{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.br":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Brotli{},
-			Archival:    archives.Tar{},
-		}
-	case "tar.sz":
-		compArchive = archives.CompressedArchive{
-			Compression: archives.Sz{},
-			Archival:    archives.Tar{},
-		}
-	case "zip":
-		compArchive = archives.CompressedArchive{
-			Archival: archives.Zip{},
-		}
-	case "":
-		return fmt.Errorf("format not set and can't be guessed from extension")
-	default:
-		return fmt.Errorf("invalid format '%s'", format)
-	}
-	// get source files
-	files, err = getRemoteFileInfo(ctx, src, dst != nil)
-	// leave if no files
+	compArchive,err = getCompressor(format,dstFile)
 	if err != nil {
 		return err
-	} else if files.Len() == 0 {
+	}
+	// get source files
+	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
+		entries.ForObject(func(o fs.Object) {
+			fi := dirEntryToFileInfo(ctx, src, o, fullpath)
+			list = append(list, fi)
+		})
+		return nil
+	})
+	if err != nil {
+		return err
+	} else if list.Len() == 0 {
 		return fmt.Errorf("no files to found in source")
 	}
+	sort.Stable(list)
 	// create destination
 	if dst != nil {
 		// create io.Pipe
 		pipeReader, pipeWriter := io.Pipe()
 		// write to pipewriter in background
 		go func() {
-			err := compArchive.Archive(ctx, pipeWriter, files)
+			err := compArchive.Archive(ctx, pipeWriter, list)
 			pipeWriter.CloseWithError(err)
 		}()
 		// rcat to remote from pipereader
@@ -249,8 +279,10 @@ func createArchive(ctx context.Context, src fs.Fs, srcFile string, dstRemote str
 		return err
 	}
 	// write to stdout
-	return compArchive.Archive(ctx, os.Stdout, files)
+	return compArchive.Archive(ctx, os.Stdout, list)
 }
+
+/*
 
 // Command - create
 var Command = &cobra.Command{
@@ -294,25 +326,25 @@ the contents of the archive will be:
     sourcedir/dir1/file2.txt
 `, "|", "`"),
 	Annotations: map[string]string{
-		"versionIntroduced": "v1.68",
+		"versionIntroduced": "v1.70",
 		"groups":            "Copy,Filter,Listing",
 	},
 	Run: func(command *cobra.Command, args []string) {
-		var src fs.Fs
-		var srcFile, dstRemote string
+		var src,dst fs.Fs
+		var srcFile, dstFile string
 		if len(args) == 1 { // source only, archive to stdout
 			src, srcFile = cmd.NewFsFile(args[0])
-			dstRemote = ""
 		} else if len(args) == 2 {
 			src, srcFile = cmd.NewFsFile(args[0])
-			dstRemote = args[1]
+			dst, dstFile = cmd.NewFsFile(args[1])
 		} else {
 			cmd.CheckArgs(1, 2, command, args)
 		}
 		//
 		cmd.Run(false, false, command, func() error {
-			return createArchive(context.Background(), src, srcFile, dstRemote)
+			return CreateArchive(context.Background(), src, srcFile, dst,dstFile)
 		})
-
 	},
 }
+
+*/
