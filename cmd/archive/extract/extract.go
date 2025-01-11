@@ -9,18 +9,17 @@ import (
 	"strings"
 
 	"github.com/mholt/archives"
+	"github.com/rclone/rclone/cmd/archive/files"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/operations"
-	"github.com/rclone/rclone/cmd/archive/files"
-
 )
 
 func init() {
 }
 
-// ExtractArchive -- extracts files from source to destination
-func ExtractArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string) error {
+// ArchiveExtract -- extracts files from source to destination
+func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string) error {
 	var srcObj fs.Object
 	var err error
 	//

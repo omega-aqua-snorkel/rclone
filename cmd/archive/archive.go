@@ -7,30 +7,29 @@ import (
 	"strings"
 
 	"github.com/rclone/rclone/cmd"
-        "github.com/rclone/rclone/fs"
-        "github.com/rclone/rclone/fs/config/flags"
- 	"github.com/spf13/cobra"
+	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/config/flags"
+	"github.com/spf13/cobra"
 
 	"github.com/rclone/rclone/cmd/archive/create"
 	"github.com/rclone/rclone/cmd/archive/extract"
 	"github.com/rclone/rclone/cmd/archive/list"
-
 )
 
 var (
-        longList = false
+	longList = false
 	fullpath = false
-	format = ""
+	format   = ""
 )
 
 func init() {
 	// create flags
-        createFlags := createCommand.Flags()
-        flags.BoolVarP(createFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
-        flags.StringVarP(createFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Use 'rcline archive create --help' for the supported formats", "")
+	createFlags := createCommand.Flags()
+	flags.BoolVarP(createFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
+	flags.StringVarP(createFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Use 'rcline archive create --help' for the supported formats", "")
 	// list flags
-        listFlags := listCommand.Flags()
-        flags.BoolVarP(listFlags, &longList, "long", "", longList, "List extra attributtes", "")
+	listFlags := listCommand.Flags()
+	flags.BoolVarP(listFlags, &longList, "long", "", longList, "List extra attributtes", "")
 	//
 	Command.AddCommand(createCommand)
 	Command.AddCommand(listCommand)
@@ -60,46 +59,45 @@ Each subcommand has its own options which you can see in their help.
 	},
 }
 
-
 var listCommand = &cobra.Command{
-        Use:   "list [flags] <source>",
-        Short: `List archive contents from source.`,
-        // Warning! "|" will be replaced by backticks below
-        Long: `List contents of an archive to the console, will autodetect format`,
-        Annotations: map[string]string{
-                "versionIntroduced": "v1.70",
-        },
-        Run: func(command *cobra.Command, args []string) {
-                cmd.CheckArgs(1, 1, command, args)
-                //
-                src, srcFile := cmd.NewFsFile(args[0])
-                //
-                cmd.Run(false, false, command, func() error {
-                        return list.ListArchive(context.Background(), src, srcFile,longList)
-                })
+	Use:   "list [flags] <source>",
+	Short: `List archive contents from source.`,
+	// Warning! "|" will be replaced by backticks below
+	Long: `List contents of an archive to the console, will autodetect format`,
+	Annotations: map[string]string{
+		"versionIntroduced": "v1.70",
+	},
+	Run: func(command *cobra.Command, args []string) {
+		cmd.CheckArgs(1, 1, command, args)
+		//
+		src, srcFile := cmd.NewFsFile(args[0])
+		//
+		cmd.Run(false, false, command, func() error {
+			return list.ArchiveList(context.Background(), src, srcFile, longList)
+		})
 
-        },
+	},
 }
 
 var extractCommand = &cobra.Command{
-        Use:   "extract [flags] <source> <destination>",
-        Short: `Extract archives from source to destination.`,
-        // Warning! "|" will be replaced by backticks below
-        Long: `Extract archive contents to destination directory, will autodetect format`,
-        Annotations: map[string]string{
-                "versionIntroduced": "v1.70",
-        },
-        Run: func(command *cobra.Command, args []string) {
-                cmd.CheckArgs(2, 2, command, args)
-                //
-                src, srcFile := cmd.NewFsFile(args[0])
-                dst, dstFile := cmd.NewFsFile(args[1])
-                //
-                cmd.Run(false, false, command, func() error {
-                        return extract.ExtractArchive(context.Background(), src, srcFile, dst, dstFile)
-                })
+	Use:   "extract [flags] <source> <destination>",
+	Short: `Extract archives from source to destination.`,
+	// Warning! "|" will be replaced by backticks below
+	Long: `Extract archive contents to destination directory, will autodetect format`,
+	Annotations: map[string]string{
+		"versionIntroduced": "v1.70",
+	},
+	Run: func(command *cobra.Command, args []string) {
+		cmd.CheckArgs(2, 2, command, args)
+		//
+		src, srcFile := cmd.NewFsFile(args[0])
+		dst, dstFile := cmd.NewFsFile(args[1])
+		//
+		cmd.Run(false, false, command, func() error {
+			return extract.ArchiveExtract(context.Background(), src, srcFile, dst, dstFile)
+		})
 
-        },
+	},
 }
 
 // Command - create
@@ -147,7 +145,7 @@ the contents of the archive will be:
 		"versionIntroduced": "v1.70",
 	},
 	Run: func(command *cobra.Command, args []string) {
-		var src,dst fs.Fs
+		var src, dst fs.Fs
 		var srcFile, dstFile string
 		if len(args) == 1 { // source only, archive to stdout
 			src, srcFile = cmd.NewFsFile(args[0])
@@ -159,7 +157,7 @@ the contents of the archive will be:
 		}
 		//
 		cmd.Run(false, false, command, func() error {
-			return create.CreateArchive(context.Background(), src, srcFile, dst,dstFile,format,fullpath)
+			return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, fullpath)
 		})
 	},
 }

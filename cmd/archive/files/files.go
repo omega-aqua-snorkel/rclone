@@ -117,7 +117,6 @@ func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.Fil
 	return fi
 }
 
-
 func (a *fileInfoImpl) Name() string {
 	return a.name
 }
@@ -145,7 +144,6 @@ func (a *fileInfoImpl) Sys() any {
 func (a *fileInfoImpl) String() string {
 	return fmt.Sprintf("Name=%v Size=%v IsDir=%v UID=%v GID=%v", a.Name(), a.Size(), a.IsDir(), a.header.Uid, a.header.Gid)
 }
-
 
 // NewFile - create a fs.File compatible struct
 func NewFile(ctx context.Context, entry stdfs.FileInfo, reader io.ReadCloser, transfer *accounting.Transfer) stdfs.File {
@@ -187,8 +185,6 @@ func (a *fileImpl) Close() error {
 	}
 	return a.err
 }
-
-
 
 // SeekableFile - wrap fs.ReOpen files
 type SeekableFile interface {
@@ -238,5 +234,3 @@ func (a *seekableFileImpl) ReadAt(p []byte, off int64) (int, error) {
 	}
 	return a.src.Read(p)
 }
-
-

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+
 	"github.com/mholt/archives"
 	"github.com/rclone/rclone/cmd"
 	"github.com/rclone/rclone/cmd/archive/files"
@@ -71,22 +72,22 @@ var (
 		"*.tar": "tar",
 		// tar.gz
 		"*.tar.gz": "tar.gz",
-		"*.tgz": "tar.gz",
-		"*.taz": "tar.gz",
+		"*.tgz":    "tar.gz",
+		"*.taz":    "tar.gz",
 		// tar.bz2
 		"*.tar.bz2": "tar.bz2",
-		"*.tb2": "tar.bz2",
-		"*.tbz": "tar.bz2",
-		"*.tbz2": "tar.bz2",
-		"*.tz2": "tar.bz2",
+		"*.tb2":     "tar.bz2",
+		"*.tbz":     "tar.bz2",
+		"*.tbz2":    "tar.bz2",
+		"*.tz2":     "tar.bz2",
 		// tar.lz
 		"*.tar.lz": "tar.lz",
 		// tar.xz
 		"*.tar.xz": "tar.xz",
-		"*.txz": "tar.xz",
+		"*.txz":    "tar.xz",
 		// tar.zst
 		"*.tar.zst": "tar.zst",
-		"*.tzst": "tar.zst",
+		"*.tzst":    "tar.zst",
 		// tar.br
 		"*.tar.br": "tar.br",
 		// tar.sz
@@ -97,31 +98,31 @@ var (
 type archivesFileInfoList []archives.FileInfo
 
 func (a archivesFileInfoList) Len() int {
-        return len(a)
+	return len(a)
 }
 
 func (a archivesFileInfoList) Less(i, j int) bool {
-        var dir1 = path.Dir(a[i].NameInArchive)
-        var dir2 = path.Dir(a[j].NameInArchive)
+	var dir1 = path.Dir(a[i].NameInArchive)
+	var dir2 = path.Dir(a[j].NameInArchive)
 
-        if dir1 < dir2 {
-                return true
-        } else if dir1 > dir2 {
-                return false
-        } else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
-                return strings.Compare(a[i].NameInArchive, a[j].NameInArchive) < 0
-        }
-        return a[j].FileInfo.IsDir()
+	if dir1 < dir2 {
+		return true
+	} else if dir1 > dir2 {
+		return false
+	} else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
+		return strings.Compare(a[i].NameInArchive, a[j].NameInArchive) < 0
+	}
+	return a[j].FileInfo.IsDir()
 }
 
 func (a archivesFileInfoList) Swap(i, j int) {
-        a[i], a[j] = a[j], a[i]
+	a[i], a[j] = a[j], a[i]
 }
 
 func init() {
 }
 
-func getCompressor(format string,filename string) (archives.CompressedArchive,error) {
+func getCompressor(format string, filename string) (archives.CompressedArchive, error) {
 	var compressor archives.CompressedArchive
 	var found bool
 	// make filename lowercase for checks
@@ -130,30 +131,30 @@ func getCompressor(format string,filename string) (archives.CompressedArchive,er
 	if format == "" {
 		// format flag not set, get format from the file extension
 		for pattern, formatName := range archiveExtensions {
-			ok,err:=path.Match(pattern,filename)
+			ok, err := path.Match(pattern, filename)
 			if err != nil {
 				// error in pattern
-				return  archives.CompressedArchive{},fmt.Errorf("invalid extension pattern '%s'", pattern)
-			}else if ok {
+				return archives.CompressedArchive{}, fmt.Errorf("invalid extension pattern '%s'", pattern)
+			} else if ok {
 				// pattern matches filename, get compressor
 				compressor, found = archiveFormats[formatName]
 				break
 			}
-		 }
-	} else{
+		}
+	} else {
 		// format flag set, look for it
 		compressor, found = archiveFormats[format]
 	}
 	//
 	if found {
-		return compressor,nil
+		return compressor, nil
 	} else if format == "" {
-		return archives.CompressedArchive{},fmt.Errorf("format not set and can't be guessed from extension")
+		return archives.CompressedArchive{}, fmt.Errorf("format not set and can't be guessed from extension")
 	}
-	return archives.CompressedArchive{},fmt.Errorf("invalid format '%s'", format)
+	return archives.CompressedArchive{}, fmt.Errorf("invalid format '%s'", format)
 }
 
-func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object,fullpath bool) archives.FileInfo {
+func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath bool) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -167,13 +168,13 @@ func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object,fullpath
 	// get entry metadata, not used right now
 	// metadata,_ := fs.GetMetadata(ctx, entry)
 	//
-        var fi = files.NewFileInfo(name,size,mtime,isDir)
-        //
-        return archives.FileInfo{
-                FileInfo:      fi,
-                NameInArchive: name,
-                LinkTarget:    "",
-                Open: func() (stdfs.File, error) {
+	var fi = files.NewFileInfo(name, size, mtime, isDir)
+	//
+	return archives.FileInfo{
+		FileInfo:      fi,
+		NameInArchive: name,
+		LinkTarget:    "",
+		Open: func() (stdfs.File, error) {
 			var err error
 			//
 			tr := accounting.Stats(ctx).NewTransfer(entry, nil)
@@ -195,63 +196,63 @@ func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object,fullpath
 			fs.Infof(src, "add to archive %s\n", name)
 			//
 			return f, nil
-                },
-        }
+		},
+	}
 }
 
-func checkValidDestination(ctx context.Context,dst fs.Fs,dstFile string)(fs.Fs,string,error){
+func checkValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.Fs, string, error) {
 	var err error
 	// check if dst + dstFile is a file
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// dst is a valid directory, dstFile is a valid file
 		// we are overwriting the file, all is well
-		return dst,dstFile,nil
-	}else if errors.Is(err, fs.ErrorIsDir) {
+		return dst, dstFile, nil
+	} else if errors.Is(err, fs.ErrorIsDir) {
 		// dst is a directory
 		// we need a file name, not good
-		return dst, dstFile,fmt.Errorf("%s is a directory",dst.Root())
-	}else if !errors.Is(err, fs.ErrorObjectNotFound) {
+		return dst, dstFile, fmt.Errorf("%s is a directory", dst.Root())
+	} else if !errors.Is(err, fs.ErrorObjectNotFound) {
 		// dst is a directory (we need a filename) or some other error happened
 		// not good, leave
-		return dst,"",fmt.Errorf("invalid destination: %w",err)
+		return dst, "", fmt.Errorf("invalid destination: %w", err)
 	}
 	// if we are here dst points to a non existing path
 	// we must check if parent is a valid directory
 	parentDir, parentFile := path.Split(dst.Root())
 	if dst.Features().IsLocal {
 		dst, dstFile = cmd.NewFsFile(parentDir)
-	}else{
-		dst, dstFile = cmd.NewFsFile(fmt.Sprintf("%s:%s",dst.Name(),parentDir))
+	} else {
+		dst, dstFile = cmd.NewFsFile(fmt.Sprintf("%s:%s", dst.Name(), parentDir))
 	}
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// parent is a directory
 		// file does not exist, we are creating is, all is good
-		return dst, parentFile,fmt.Errorf("can't create %s, %s is a file",parentFile,parentDir)
-	}else if errors.Is(err, fs.ErrorIsDir) {
+		return dst, parentFile, fmt.Errorf("can't create %s, %s is a file", parentFile, parentDir)
+	} else if errors.Is(err, fs.ErrorIsDir) {
 		// parent is a directory
 		// file does not exist, we are creating is, all is good
 		return dst, parentFile, nil
 	}
 	// something else happened
-	return dst,parentFile,fmt.Errorf("invalid parent dir %s: %w",parentDir,err)
+	return dst, parentFile, fmt.Errorf("invalid parent dir %s: %w", parentDir, err)
 }
 
-// CreateArchive - compresses/archive source to destination
-func CreateArchive(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs,dstFile string,format string,fullpath bool) error {
+// ArchiveCreate - compresses/archive source to destination
+func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string, format string, fullpath bool) error {
 	var err error
 	var list archivesFileInfoList
 	var compArchive archives.CompressedArchive
 	// check id dst is valid
 	if dst != nil {
-		dst,dstFile,err=checkValidDestination(ctx,dst,dstFile)
+		dst, dstFile, err = checkValidDestination(ctx, dst, dstFile)
 		if err != nil {
 			return err
 		}
 	}
 	// get archive format
-	compArchive,err = getCompressor(format,dstFile)
+	compArchive, err = getCompressor(format, dstFile)
 	if err != nil {
 		return err
 	}

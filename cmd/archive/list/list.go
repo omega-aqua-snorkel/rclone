@@ -15,8 +15,8 @@ import (
 	"github.com/rclone/rclone/cmd/archive/files"
 )
 
-// ListArchive -- print a list of the files in the archive
-func ListArchive(ctx context.Context, src fs.Fs, srcFile string,longList bool) error {
+// ArchiveList -- print a list of the files in the archive
+func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) error {
 	var srcObj fs.Object
 	var err error
 	//
@@ -51,7 +51,7 @@ func ListArchive(ctx context.Context, src fs.Fs, srcFile string,longList bool) e
 	format, _, err := archives.Identify(ctx, "", in)
 	//
 	if err != nil {
-		return fmt.Errorf("failed to open check file type, %wq", err)
+		return fmt.Errorf("failed to open check file type, %w", err)
 	}
 	fs.Debugf(src, "Listing %s/%s, format %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."))
 	// check if extract is supported by format
