@@ -101,7 +101,9 @@ func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.Fil
 	fi.header.Name = name
 	fi.header.Size = size
 	fi.header.Mode = 0666
-	if isDir { fi.header.Mode = int64(stdfs.ModeDir) | fi.header.Mode }
+	if isDir {
+		fi.header.Mode = int64(stdfs.ModeDir) | fi.header.Mode
+	}
 	fi.header.Uid = 0
 	fi.header.Gid = 0
 	fi.header.Uname = "root"
