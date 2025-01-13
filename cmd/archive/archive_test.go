@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rclone/rclone/cmd/archive/create"
+	"github.com/rclone/rclone/cmd/archive/list"
+	"github.com/rclone/rclone/cmd/archive/extract"
 )
 
 var (
@@ -46,14 +48,24 @@ func TestCheckValidDestination(t *testing.T) {
 	require.ErrorIs(t, err,fs.ErrorObjectNotFound)
 }
 
-func TestCreateArchive(t *testing.T) {
+func TestArchiveFunctions(t *testing.T) {
+	var err error
+	//
         ctx := context.Background()
         r := fstest.NewRun(t)
-        // create local file
-        r.WriteFile("root.txt", "root", t1)
-        r.WriteFile("dir1/sub1.txt", "111", t1)
-        r.WriteFile("dir2/sub2.txt", "222", t1)
-        // try and create archive
-	err := create.ArchiveCreate(ctx,r.Flocal,"",r.Fremote,"text.tgz","",true)
+        // create local file system
+        f1:=r.WriteFile("file1.txt", "content 1", t1)
+        f2:=r.WriteFile("dir1/sub1.txt", "sub content 1", t1)
+        f3:=r.WriteFile("dir2/sub2.txt", "sub content 2", t1)
+        // create archive
+        err = create.ArchiveCreate(ctx,r.Flocal,"",r.Flocal,"test.zip","",false)
         require.NoError(t, err)
+	// list archive
+	err = list.ArchiveList(ctx,r.Flocal,"test.zip",false)
+        require.NoError(t, err)
+	// extract archive
+	err = extract.ArchiveExtract(ctx,r.Flocal,"test.zip",r.Fremote,"")
+        require.NoError(t, err)
+	// check files
+	fstest.CheckListingWithPrecision(t, r.Fremote, []fstest.Item{f1, f2, f3}, nil, fs.ModTimeNotSupported)
 }

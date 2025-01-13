@@ -107,10 +107,8 @@ func (a archivesFileInfoList) Less(i, j int) bool {
 		return strings.Compare( a[i].NameInArchive, a[j].NameInArchive) < 0
 	} else if a[i].FileInfo.IsDir(){
 		return strings.Compare( strings.TrimSuffix(a[i].NameInArchive,"/"), path.Dir(a[j].NameInArchive)) < 0
-	} else {
-		return strings.Compare( path.Dir(a[i].NameInArchive), strings.TrimSuffix(a[j].NameInArchive,"/")) < 0
-
 	}
+	return strings.Compare( path.Dir(a[i].NameInArchive), strings.TrimSuffix(a[j].NameInArchive,"/")) < 0
 }
 
 func (a archivesFileInfoList) Swap(i, j int) {
@@ -209,7 +207,7 @@ func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, full
         if fullpath {
                 name = path.Join(strings.TrimPrefix(src.Root(), "/"), name)
         }
-	name=name+"/"
+	name+="/"
         // get entry metadata, not used right now
         // metadata,_ := fs.GetMetadata(ctx, entry)
         //

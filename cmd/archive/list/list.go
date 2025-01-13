@@ -67,7 +67,7 @@ func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) 
 		}
 		// get entry name 
 		name:=f.NameInArchive
-		if f.IsDir() && !strings.HasSuffix(name,"/") { name = name+"/" }
+		if f.IsDir() && !strings.HasSuffix(name,"/") { name += "/" }
 		// print info
 		if longList {
 			operations.SyncFprintf(os.Stdout, "%s %s %s\n", operations.SizeStringField(f.Size(), ci.HumanReadable, 9), f.ModTime().Format("2006-01-02 15:04:05.000000000"), name)
