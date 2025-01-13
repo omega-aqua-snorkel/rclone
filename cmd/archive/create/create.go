@@ -102,17 +102,15 @@ func (a archivesFileInfoList) Len() int {
 }
 
 func (a archivesFileInfoList) Less(i, j int) bool {
-	var dir1 = path.Dir(a[i].NameInArchive)
-	var dir2 = path.Dir(a[j].NameInArchive)
+	if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
+		// both are same type, order by name
+		return strings.Compare( a[i].NameInArchive, a[j].NameInArchive) < 0
+	} else if a[i].FileInfo.IsDir(){
+		return strings.Compare( strings.TrimSuffix(a[i].NameInArchive,"/"), path.Dir(a[j].NameInArchive)) < 0
+	} else {
+		return strings.Compare( path.Dir(a[i].NameInArchive), strings.TrimSuffix(a[j].NameInArchive,"/")) < 0
 
-	if dir1 < dir2 {
-		return true
-	} else if dir1 > dir2 {
-		return false
-	} else if a[i].FileInfo.IsDir() == a[j].FileInfo.IsDir() {
-		return strings.Compare(a[i].NameInArchive, a[j].NameInArchive) < 0
 	}
-	return a[j].FileInfo.IsDir()
 }
 
 func (a archivesFileInfoList) Swap(i, j int) {
@@ -154,7 +152,7 @@ func getCompressor(format string, filename string) (archives.CompressedArchive, 
 	return archives.CompressedArchive{}, fmt.Errorf("invalid format '%s'", format)
 }
 
-func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath bool) archives.FileInfo {
+func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath bool) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -196,46 +194,84 @@ func dirEntryToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpat
 			fs.Infof(src, "add to archive %s\n", name)
 			//
 			return f, nil
-		},
+		 },
 	}
 }
 
-func checkValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.Fs, string, error) {
+func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, fullpath bool) archives.FileInfo {
+        // get entry type
+        dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
+        // fill structure
+        name := path.Join(entry.Remote())
+        size := entry.Size()
+        mtime := entry.ModTime(ctx)
+        isDir := reflect.TypeOf(entry).Implements(dirType)
+        if fullpath {
+                name = path.Join(strings.TrimPrefix(src.Root(), "/"), name)
+        }
+	name=name+"/"
+        // get entry metadata, not used right now
+        // metadata,_ := fs.GetMetadata(ctx, entry)
+        //
+        var fi = files.NewFileInfo(name, size, mtime, isDir)
+        //
+        return archives.FileInfo{
+                FileInfo:      fi,
+                NameInArchive: name,
+                LinkTarget:    "",
+		Open: func() (stdfs.File, error) {
+			return nil,fmt.Errorf("%s is not a file", name)
+		},
+        }
+}
+
+func getRemoteFromFs(src fs.Fs,dstFile string) string {
+	if src.Features().IsLocal {
+		return path.Join(src.Root(),dstFile)
+	}
+	return fmt.Sprintf("%s:%s", src.Name(), path.Join(src.Root(),dstFile))
+}
+
+// CheckValidDestination - takes fs.Fs and dstFile and checks if directory is valid
+func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.Fs, string, error) {
 	var err error
 	// check if dst + dstFile is a file
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// dst is a valid directory, dstFile is a valid file
 		// we are overwriting the file, all is well
+		fs.Debugf(dst, "%s valid (file exist)\n", getRemoteFromFs(dst,dstFile))
 		return dst, dstFile, nil
 	} else if errors.Is(err, fs.ErrorIsDir) {
 		// dst is a directory
 		// we need a file name, not good
-		return dst, dstFile, fmt.Errorf("%s is a directory", dst.Root())
+		fs.Debugf(dst, "%s invalid\n", getRemoteFromFs(dst,dstFile))
+		return dst, dstFile, fmt.Errorf("%s %w", getRemoteFromFs(dst,dstFile),err)
 	} else if !errors.Is(err, fs.ErrorObjectNotFound) {
 		// dst is a directory (we need a filename) or some other error happened
 		// not good, leave
-		return dst, "", fmt.Errorf("invalid destination: %w", err)
+		fs.Debugf(dst, "%s invalid - %v\n", getRemoteFromFs(dst,dstFile),err)
+		return dst, "", fmt.Errorf("%s is invalid: %w", getRemoteFromFs(dst,dstFile),err)
 	}
 	// if we are here dst points to a non existing path
 	// we must check if parent is a valid directory
-	parentDir, parentFile := path.Split(dst.Root())
-	if dst.Features().IsLocal {
-		dst, dstFile = cmd.NewFsFile(parentDir)
-	} else {
-		dst, dstFile = cmd.NewFsFile(fmt.Sprintf("%s:%s", dst.Name(), parentDir))
-	}
+	fs.Debugf(dst, "check if add to archive %s\n", getRemoteFromFs(dst,dstFile))
+	parentDir, parentFile := path.Split(getRemoteFromFs(dst,dstFile))
+	dst, dstFile = cmd.NewFsFile(parentDir)
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// parent is a directory
 		// file does not exist, we are creating is, all is good
+		fs.Debugf(dst, "%s invalid - parent is a file\n", getRemoteFromFs(dst,dstFile))
 		return dst, parentFile, fmt.Errorf("can't create %s, %s is a file", parentFile, parentDir)
 	} else if errors.Is(err, fs.ErrorIsDir) {
 		// parent is a directory
 		// file does not exist, we are creating is, all is good
+		fs.Debugf(dst, "%s valid - parent is a dir, file does not exist\n", getRemoteFromFs(dst,dstFile))
 		return dst, parentFile, nil
 	}
 	// something else happened
+	fs.Debugf(dst, "%s invalid - %v\n", getRemoteFromFs(dst,dstFile),err)
 	return dst, parentFile, fmt.Errorf("invalid parent dir %s: %w", parentDir, err)
 }
 
@@ -246,7 +282,7 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	var compArchive archives.CompressedArchive
 	// check id dst is valid
 	if dst != nil {
-		dst, dstFile, err = checkValidDestination(ctx, dst, dstFile)
+		dst, dstFile, err = CheckValidDestination(ctx, dst, dstFile)
 		if err != nil {
 			return err
 		}
@@ -258,8 +294,14 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	}
 	// get source files
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
+		// get directories
+		entries.ForDir(func(o fs.Directory) {
+			fi := directoryToFileInfo(ctx, src, o, fullpath)
+			list = append(list, fi)
+		})
+		// get files
 		entries.ForObject(func(o fs.Object) {
-			fi := dirEntryToFileInfo(ctx, src, o, fullpath)
+			fi := objectToFileInfo(ctx, src, o, fullpath)
 			list = append(list, fi)
 		})
 		return nil

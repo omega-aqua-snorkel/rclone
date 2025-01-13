@@ -78,11 +78,7 @@ func metadataToHeader(metadata map[string]string,header *tar.Header){
 // structs for fs.FileInfo,fs.File,SeekableFile
 
 type fileInfoImpl struct {
-	name   string
-	size   int64
-	mtime  time.Time
-	isDir  bool
-	header *tar.Header // hate this, just for uid/gid/gname/uname
+	header *tar.Header
 }
 
 type fileImpl struct {
@@ -101,16 +97,16 @@ type seekableFileImpl struct {
 func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.FileInfo {
 	var fi = new(fileInfoImpl)
 	//
-	fi.name = name
-	fi.size = size
-	fi.mtime = mtime
-	fi.isDir = isDir
 	fi.header = new(tar.Header)
+	fi.header.Name = name
+	fi.header.Size = size
 	fi.header.Mode = 0666
+	if isDir { fi.header.Mode = int64(stdfs.ModeDir) | fi.header.Mode }
 	fi.header.Uid = 0
 	fi.header.Gid = 0
 	fi.header.Uname = "root"
 	fi.header.Gname = "root"
+	fi.header.ModTime = mtime
 	fi.header.AccessTime = mtime
 	fi.header.ChangeTime = mtime
 	//
@@ -118,11 +114,11 @@ func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.Fil
 }
 
 func (a *fileInfoImpl) Name() string {
-	return a.name
+	return a.header.Name
 }
 
 func (a *fileInfoImpl) Size() int64 {
-	return a.size
+	return a.header.Size
 }
 
 func (a *fileInfoImpl) Mode() stdfs.FileMode {
@@ -130,11 +126,11 @@ func (a *fileInfoImpl) Mode() stdfs.FileMode {
 }
 
 func (a *fileInfoImpl) ModTime() time.Time {
-	return a.mtime
+	return a.header.ModTime
 }
 
 func (a *fileInfoImpl) IsDir() bool {
-	return a.isDir
+	return (a.header.Mode & int64(stdfs.ModeDir)) != 0
 }
 
 func (a *fileInfoImpl) Sys() any {

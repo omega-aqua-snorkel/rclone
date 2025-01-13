@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path"
 	"strings"
 
 	"github.com/mholt/archives"
@@ -77,30 +76,20 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	// extract files
 	err = ex.Extract(ctx, in, func(ctx context.Context, f archives.FileInfo) error {
 		// check if file should be extracted
-		if !fi.Include(f.NameInArchive, f.Size(), f.ModTime(), fs.Metadata{}) {
-			return nil
-		} else if f.IsDir() {
-			return nil
-		}
-		// create directory if needed
-		dir, _ := path.Split(f.NameInArchive)
-		if dir != "" {
-			err := operations.Mkdir(ctx, dst, dir)
-			if err != nil {
-				return err
-			}
-		}
-		// open the file
-		fin, err := f.Open()
-		if err != nil {
-			return err
-		}
-		// extract the file to destination
-		_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
-		if err == nil {
-			fs.Infof(src, "extracted %s\n", f.NameInArchive)
-		}
+		if !fi.Include(f.NameInArchive, f.Size(), f.ModTime(), fs.Metadata{}) {	return nil }
 		//
+		if f.IsDir() {
+			// directory, try and crerate it
+			err := operations.Mkdir(ctx, dst, f.NameInArchive)
+			if err == nil {	fs.Infof(src, "created dir %s\n", f.NameInArchive) }
+		} else {
+			// file, open it
+			fin, err := f.Open()
+			if err != nil {	return err }
+			// extract the file to destination
+			_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
+			if err == nil {	fs.Infof(src, "extracted %s\n", f.NameInArchive) }
+		}
 		return err
 	})
 	//

@@ -61,12 +61,18 @@ func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) 
 	}
 	// list files
 	err = ex.Extract(ctx, in, func(ctx context.Context, f archives.FileInfo) error {
+		// check if excluded
 		if !fi.Include(f.NameInArchive, f.Size(), f.ModTime(), fs.Metadata{}) {
 			return nil
-		} else if longList {
-			operations.SyncFprintf(os.Stdout, "%s %s %s\n", operations.SizeStringField(f.Size(), ci.HumanReadable, 9), f.ModTime().Format("2006-01-02 15:04:05.000000000"), f.NameInArchive)
+		}
+		// get entry name 
+		name:=f.NameInArchive
+		if f.IsDir() && !strings.HasSuffix(name,"/") { name = name+"/" }
+		// print info
+		if longList {
+			operations.SyncFprintf(os.Stdout, "%s %s %s\n", operations.SizeStringField(f.Size(), ci.HumanReadable, 9), f.ModTime().Format("2006-01-02 15:04:05.000000000"), name)
 		} else {
-			operations.SyncFprintf(os.Stdout, "%s %s\n", operations.SizeStringField(f.Size(), ci.HumanReadable, 9), f.NameInArchive)
+			operations.SyncFprintf(os.Stdout, "%s %s\n", operations.SizeStringField(f.Size(), ci.HumanReadable, 9), name)
 		}
 		return nil
 	})
