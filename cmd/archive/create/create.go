@@ -150,7 +150,7 @@ func getCompressor(format string, filename string) (archives.CompressedArchive, 
 	return archives.CompressedArchive{}, fmt.Errorf("invalid format '%s'", format)
 }
 
-func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath bool) archives.FileInfo {
+func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, prefix string) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -158,8 +158,8 @@ func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath 
 	size := entry.Size()
 	mtime := entry.ModTime(ctx)
 	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if fullpath {
-		name = path.Join(strings.TrimPrefix(src.Root(), "/"), name)
+	if prefix != "__NONE__" {
+		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
 	}
 	// get entry metadata, not used right now
 	// metadata,_ := fs.GetMetadata(ctx, entry)
@@ -196,7 +196,7 @@ func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, fullpath 
 	}
 }
 
-func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, fullpath bool) archives.FileInfo {
+func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, prefix string) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -204,8 +204,8 @@ func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, full
 	size := entry.Size()
 	mtime := entry.ModTime(ctx)
 	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if fullpath {
-		name = path.Join(strings.TrimPrefix(src.Root(), "/"), name)
+	if prefix != "__NONE__" {
+		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
 	}
 	name += "/"
 	// get entry metadata, not used right now
@@ -274,7 +274,7 @@ func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.F
 }
 
 // ArchiveCreate - compresses/archive source to destination
-func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string, format string, fullpath bool) error {
+func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string, format string, prefix string) error {
 	var err error
 	var list archivesFileInfoList
 	var compArchive archives.CompressedArchive
@@ -294,12 +294,12 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
-			fi := directoryToFileInfo(ctx, src, o, fullpath)
+			fi := directoryToFileInfo(ctx, src, o, prefix)
 			list = append(list, fi)
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
-			fi := objectToFileInfo(ctx, src, o, fullpath)
+			fi := objectToFileInfo(ctx, src, o, prefix)
 			list = append(list, fi)
 		})
 		return nil

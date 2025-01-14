@@ -57,7 +57,7 @@ func TestArchiveFunctions(t *testing.T) {
 	f2 := r.WriteFile("dir1/sub1.txt", "sub content 1", t1)
 	f3 := r.WriteFile("dir2/sub2.txt", "sub content 2", t1)
 	// create archive
-	err = create.ArchiveCreate(ctx, r.Flocal, "", r.Flocal, "test.zip", "", false)
+	err = create.ArchiveCreate(ctx, r.Flocal, "", r.Flocal, "test.zip", "", "")
 	require.NoError(t, err)
 	// list archive
 	err = list.ArchiveList(ctx, r.Flocal, "test.zip", false)

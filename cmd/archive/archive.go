@@ -19,14 +19,16 @@ import (
 var (
 	longList = false
 	fullpath = false
+	prefix   = ""
 	format   = ""
 )
 
 func init() {
 	// create flags
 	createFlags := createCommand.Flags()
-	flags.BoolVarP(createFlags, &fullpath, "fullpath", "", fullpath, "Save full path in archive", "")
-	flags.StringVarP(createFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Use 'rcline archive create --help' for the supported formats", "")
+	flags.BoolVarP(createFlags, &fullpath, "fullpath", "", fullpath, "Set prefix for files in archive to source path", "")
+	flags.StringVarP(createFlags, &prefix, "prefix", "", prefix, "Set prefix for files in archive to entered value", "")
+	flags.StringVarP(createFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Use 'rclone archive create --help' for the supported formats", "")
 	// list flags
 	listFlags := listCommand.Flags()
 	flags.BoolVarP(listFlags, &longList, "long", "", longList, "List extra attributtes", "")
@@ -123,23 +125,39 @@ guess it from the extension.
 	tar.br	  .tar.br
 	tar.sz	  .tar.sz
 
-The --fullpath flag will set the file name in the archive to the 
-full path name. If we have a directory |/sourcedir| with the following:
+The --prefix and --fullpath flags will add a prefix for the files in
+the archive. If the flag |--fullpath| is set then the files will have
+the source path as prefix. If the flag |--prefix=<value>| is set then
+the files will have <value> as prefix. It's possible to create invalid
+file names with |--prefix=<value>| so use caution. Flag |--prefix|
+always has priority.
+
+If we have a directory |/sourcedir| with the following:
 
     file1.txt
     dir1/file2.txt
 
-If we run the command |rclone archive /sourcedir /dest.tar.gz| the 
+If we run the command |rclone archive /sourcedir /dest.tar.gz| the
 contents of the archive will be:
 
     file1.txt
+    dir1/
     dir1/file2.txt
 
 If we run the command |rclone archive --fullpath /sourcedir /dest.tar.gz|
 the contents of the archive will be:
 
     sourcedir/file1.txt
+    sourcedir/dir1/
     sourcedir/dir1/file2.txt
+
+If we run the command |rclone archive --prefix=my_new_path /sourcedir /dest.tar.gz|
+the contents of the archive will be:
+
+    my_new_path/file1.txt
+    my_new_path/dir1/
+    my_new_path/dir1/file2.txt
+
 `, "|", "`"),
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.70",
@@ -155,9 +173,13 @@ the contents of the archive will be:
 		} else {
 			cmd.CheckArgs(1, 2, command, args)
 		}
-		//
 		cmd.Run(false, false, command, func() error {
-			return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, fullpath)
+			if prefix != "" {
+				return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, prefix)
+			} else if fullpath {
+				return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, src.Root())
+			}
+			return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, "")
 		})
 	},
 }
