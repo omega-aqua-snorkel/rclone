@@ -10,9 +10,7 @@ import (
 
 	"archive/tar"
 
-	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
-	"github.com/rclone/rclone/fs/operations"
 )
 
 // not using this, not all backends have uid/gid so is this even worth it?
@@ -87,10 +85,6 @@ type fileImpl struct {
 	reader   io.ReadCloser
 	transfer *accounting.Transfer
 	err      error
-}
-
-type seekableFileImpl struct {
-	src *operations.ReOpen
 }
 
 // NewFileInfo - create a fs.FileInfo compatible struct
@@ -182,53 +176,4 @@ func (a *fileImpl) Close() error {
 		a.transfer.Done(a.ctx, a.err)
 	}
 	return a.err
-}
-
-// SeekableFile - wrap fs.ReOpen files
-type SeekableFile interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-	io.ReaderAt
-}
-
-// NewSeekableFile - wraps ReOpen file with io.Seeker,io.ReadAt so extract/list works with 7z/zip files
-func NewSeekableFile(ctx context.Context, src fs.Object, maxTries int) (SeekableFile, error) {
-	var f = new(seekableFileImpl)
-	//
-	var options []fs.OpenOption
-	for _, option := range fs.GetConfig(ctx).DownloadHeaders {
-		options = append(options, option)
-	}
-	// try and open file
-	rc, err := operations.NewReOpen(ctx, src, maxTries, options...)
-	//
-	if err != nil {
-		return nil, err
-	}
-	//
-	f.src = rc
-	return f, nil
-}
-
-func (a *seekableFileImpl) Read(p []byte) (n int, err error) {
-	return a.src.Read(p)
-}
-
-func (a *seekableFileImpl) Seek(offset int64, whence int) (int64, error) {
-	return a.src.Seek(offset, whence)
-}
-
-func (a *seekableFileImpl) Close() error {
-	return a.src.Close()
-}
-
-func (a *seekableFileImpl) ReadAt(p []byte, off int64) (int, error) {
-	var err error
-	//
-	_, err = a.src.Seek(off, io.SeekStart)
-	if err != nil {
-		return 0, err
-	}
-	return a.src.Read(p)
 }

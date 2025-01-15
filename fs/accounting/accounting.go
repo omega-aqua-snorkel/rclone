@@ -369,11 +369,37 @@ func (acc *Account) read(in io.Reader, p []byte) (n int, err error) {
 	return n, err
 }
 
+// seek to position if implemented in io.Reader
+func (acc *Account) seek(in io.Reader, offset int64, whence int) (int64, error) {
+	seeker, ok := in.(io.Seeker)
+	if !ok {
+		return 0, fmt.Errorf("Seek not implemented")
+	}
+	return seeker.Seek(offset, whence)
+}
+
 // Read bytes from the object - see io.Reader
 func (acc *Account) Read(p []byte) (n int, err error) {
 	acc.mu.Lock()
 	defer acc.mu.Unlock()
 	return acc.read(acc.in, p)
+}
+
+// Seek to position in the object - see io.Seeker
+func (acc *Account) Seek(offset int64, whence int) (int64, error) {
+	acc.mu.Lock()
+	defer acc.mu.Unlock()
+	return acc.seek(acc.in, offset, whence)
+}
+
+// ReadAt position from the object - see io.ReaderAt
+func (acc *Account) ReadAt(p []byte, off int64) (int, error) {
+	_, err := acc.Seek(off, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+	//
+	return acc.Read(p)
 }
 
 // Thin wrapper for w

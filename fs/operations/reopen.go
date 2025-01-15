@@ -281,6 +281,19 @@ func (h *ReOpen) Seek(offset int64, whence int) (int64, error) {
 	return abs, nil
 }
 
+// ReadAt moves to the stream position and reads the bytes
+func (h *ReOpen) ReadAt(p []byte, off int64) (int, error) {
+	// maybe this seek could be optimized
+	// to change the whence parameter depending
+	// on the offset
+	_, err := h.Seek(off, io.SeekStart)
+	if err != nil {
+		return 0, err
+	}
+	//
+	return h.Read(p)
+}
+
 // Close the stream
 func (h *ReOpen) Close() error {
 	h.mu.Lock()

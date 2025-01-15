@@ -5,11 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/mholt/archives"
-	"github.com/rclone/rclone/cmd/archive/files"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/operations"
 )
@@ -42,24 +43,24 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	} else if !errors.Is(err, fs.ErrorIsDir) {
 		return fmt.Errorf("unable to access destination, %w", err)
 	}
-	// clear error, previous ckeck shoud end with err==fs.ErrorIsDir
+	//
+	err = nil
 	fs.Debugf(dst, "Destination for extracted files: %s", dst.Root())
-	/*
-		// open source
-		tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
-		defer tr.Done(ctx, err)
-		//
-		var options []fs.OpenOption
-		for _, option := range fs.GetConfig(ctx).DownloadHeaders {
-			options = append(options, option)
-		}
-		var in io.Reader
-		in, err = operations.Open(ctx, srcObj, options...)
-	*/
-	in, err := files.NewSeekableFile(ctx, srcObj, 5)
+	// start accounting
+	tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
+	defer tr.Done(ctx, err)
+	// open source
+	var options []fs.OpenOption
+	for _, option := range fs.GetConfig(ctx).DownloadHeaders {
+		options = append(options, option)
+	}
+	var in io.ReadCloser
+	in, err = operations.Open(ctx, srcObj, options...)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", srcFile, err)
 	}
+	// account and buffer the transfer
+	in = tr.Account(ctx, in).WithBuffer()
 	// identify format
 	format, _, err := archives.Identify(ctx, "", in)
 	//
