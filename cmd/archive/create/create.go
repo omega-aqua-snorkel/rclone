@@ -158,7 +158,7 @@ func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, prefix st
 	size := entry.Size()
 	mtime := entry.ModTime(ctx)
 	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if prefix != "__NONE__" {
+	if prefix != "" {
 		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
 	}
 	// get entry metadata, not used right now
@@ -204,7 +204,7 @@ func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, pref
 	size := entry.Size()
 	mtime := entry.ModTime(ctx)
 	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if prefix != "__NONE__" {
+	if prefix != "" {
 		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
 	}
 	name += "/"
