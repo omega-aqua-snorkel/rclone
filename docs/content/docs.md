@@ -874,7 +874,7 @@ Using this flag can use more memory as it effectively sets
 `--max-backlog` to infinite. This means that all the info on the
 objects to transfer is held in memory before the transfers start.
 
-### --checkers=N
+### --checkers=int
 
 Originally controlling just the number of file checkers to run in parallel, 
 e.g. by `rclone copy`. Now a fairly universal parallelism control 
@@ -1497,7 +1497,7 @@ warnings and significant events.
 This switches the log format to JSON for rclone. The fields of json log
 are level, msg, source, time.
 
-### --low-level-retries NUMBER
+### --low-level-retries=int
 
 This controls the number of low level retries rclone does.
 
@@ -1513,7 +1513,7 @@ to reduce the value so rclone moves on to a high level retry (see the
 
 Disable low level retries with `--low-level-retries 1`.
 
-### --max-backlog=N
+### --max-backlog=int
 
 This is the maximum allowable backlog of files in a sync/copy/move
 queued for being checked or transferred.
@@ -1532,7 +1532,7 @@ of the remote which may be desirable.
 Setting this to a negative number will make the backlog as large as
 possible.
 
-### --max-delete=N
+### --max-delete=int
 
 This tells rclone not to delete more than N files.  If that limit is
 exceeded then a fatal error will be generated and rclone will stop the
@@ -1546,7 +1546,7 @@ reached the size specified. It defaults to off.
 If that limit is exceeded then a fatal error will be generated and
 rclone will stop the operation in progress.
 
-### --max-depth=N
+### --max-depth=int
 
 This modifies the recursion depth for all the commands except purge.
 
@@ -1804,7 +1804,7 @@ Use `--local-no-sparse` to disable sparse files (which may cause long
 delays at the start of transfers) or disable multi-thread transfers
 with `--multi-thread-streams 0`
 
-### --multi-thread-streams=N
+### --multi-thread-streams=int
 
 When using multi thread transfers (see above `--multi-thread-cutoff`)
 this sets the number of streams to use. Set to `0` to disable multi
@@ -1934,7 +1934,7 @@ The `--order-by` flag does not do a separate pass over the data.  This
 means that it may transfer some files out of the order specified if
 
 - there are no files in the backlog or the source has not been fully scanned yet
-- there are more than [--max-backlog](#max-backlog-n) files in the backlog
+- there are more than [--max-backlog](#max-backlog-int) files in the backlog
 
 Rclone will do its best to transfer the best file it has so in
 practice this should not cause a problem.  Think of `--order-by` as
@@ -2400,7 +2400,7 @@ becomes idle for this long it is considered broken and disconnected.
 
 The default is `5m`.  Set to `0` to disable.
 
-### --transfers=N
+### --transfers=int
 
 The number of file transfers to run in parallel.  It can sometimes be
 useful to set this to a smaller number if the remote is giving a lot
