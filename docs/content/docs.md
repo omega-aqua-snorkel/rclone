@@ -664,7 +664,7 @@ However, a suffix of `B` for Byte, `K` for KiB, `M` for MiB,
 `G` for GiB, `T` for TiB and `P` for PiB may be used. These are
 the binary units, e.g. 1, 2\*\*10, 2\*\*20, 2\*\*30 respectively.
 
-### --backup-dir=DIR
+### --backup-dir
 
 When using `sync`, `copy` or `move` any files which would have been
 overwritten or deleted are moved in their original hierarchy into this
@@ -834,7 +834,7 @@ Set to `0` to disable the buffering for the minimum memory usage.
 Note that the memory allocation of the buffers is influenced by the
 [--use-mmap](#use-mmap) flag.
 
-### --cache-dir=DIR
+### --cache-dir
 
 Specify the directory rclone will use for caching, to override
 the default.
@@ -843,7 +843,7 @@ Default value is depending on operating system:
 - Windows `%LocalAppData%\rclone`, if `LocalAppData` is defined.
 - macOS `$HOME/Library/Caches/rclone` if `HOME` is defined.
 - Unix `$XDG_CACHE_HOME/rclone` if `XDG_CACHE_HOME` is defined, else `$HOME/.cache/rclone` if `HOME` is defined.
-- Fallback (on all OS) to `$TMPDIR/rclone`, where `TMPDIR` is the value from [--temp-dir](#temp-dir-dir).
+- Fallback (on all OS) to `$TMPDIR/rclone`, where `TMPDIR` is the value from [--temp-dir](#temp-dir).
 
 You can use the [config paths](/commands/rclone_config_paths/)
 command to see the current value.
@@ -923,7 +923,7 @@ Specify when colors (and other ANSI codes) should be added to the output.
 
 `ALWAYS` always add ANSI codes, regardless of the output format (terminal or file)
 
-### --compare-dest=DIR
+### --compare-dest
 
 When using `sync`, `copy` or `move` DIR is checked in addition to the
 destination for files. If a file identical to the source is found that
@@ -1047,7 +1047,7 @@ The connection timeout is the amount of time rclone will wait for a
 connection to go through to a remote object storage system.  It is
 `1m` by default.
 
-### --copy-dest=DIR
+### --copy-dest
 
 When using `sync`, `copy` or `move` DIR is checked in addition to the
 destination for files. If a file identical to the source is found that
@@ -2205,7 +2205,7 @@ If using `--syslog` this sets the syslog facility (e.g. `KERN`, `USER`).
 See `man syslog` for a list of possible facilities.  The default
 facility is `DAEMON`.
 
-### --temp-dir=DIR
+### --temp-dir
 
 Specify the directory rclone will use for temporary files, to override
 the default. Make sure the directory exists and have accessible permissions.
