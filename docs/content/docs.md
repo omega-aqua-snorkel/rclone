@@ -659,7 +659,7 @@ formats:
 
 ### Size options {#size-option}
 
-Options which use SIZE use KiB (multiples of 1024 bytes) by default.
+Options which use SizeSuffix use KiB (multiples of 1024 bytes) by default.
 However, a suffix of `B` for Byte, `K` for KiB, `M` for MiB,
 `G` for GiB, `T` for TiB and `P` for PiB may be used. These are
 the binary units, e.g. 1, 2\*\*10, 2\*\*20, 2\*\*30 respectively.
@@ -820,7 +820,7 @@ This can be used in conjunction with `--bwlimit`.
 Note that if a schedule is provided the file will use the schedule in
 effect at the start of the transfer.
 
-### --buffer-size=SIZE
+### --buffer-size=SizeSuffix
 
 Use this sized buffer to speed up file transfers.  Each `--transfer`
 will use this much memory for buffering.
@@ -1538,7 +1538,7 @@ This tells rclone not to delete more than N files.  If that limit is
 exceeded then a fatal error will be generated and rclone will stop the
 operation in progress.
 
-### --max-delete-size=SIZE
+### --max-delete-size=SizeSuffix
 
 Rclone will stop deleting files when the total size of deletions has
 reached the size specified. It defaults to off.
@@ -1575,7 +1575,7 @@ Use `--cutoff-mode` to modify this behaviour.
 
 Rclone will exit with exit code 10 if the duration limit is reached.
 
-### --max-transfer=SIZE
+### --max-transfer=SizeSuffix
 
 Rclone will stop transferring when it has reached the size specified.
 Defaults to off.
@@ -1735,10 +1735,10 @@ if you are reading and writing to an OS X filing system this will be
 
 This command line flag allows you to override that computed default.
 
-### --multi-thread-write-buffer-size=SIZE
+### --multi-thread-write-buffer-size=SizeSuffix
 
-When transferring with multiple threads, rclone will buffer SIZE bytes
-in memory before writing to disk for each thread.
+When transferring with multiple threads, rclone will buffer the specified
+number of bytes in memory before writing to disk for each thread.
 
 This can improve performance if the underlying filesystem does not deal
 well with a lot of small writes in different positions of the file, so
@@ -1762,10 +1762,10 @@ but not `OpenChunkWriter`) don't have a natural chunk size.
 
 In this case the value of this option is used (default 64Mi).
 
-### --multi-thread-cutoff=SIZE {#multi-thread-cutoff}
+### --multi-thread-cutoff=SizeSuffix {#multi-thread-cutoff}
 
-When transferring files above SIZE to capable backends, rclone will
-use multiple threads to transfer the file (default 256M).
+When transferring files above specified size  to capable backends,
+rclone will use multiple threads to transfer the file (default 256M).
 
 Capable backends are marked in the
 [overview](/overview/#optional-features) as `MultithreadUpload`. (They
