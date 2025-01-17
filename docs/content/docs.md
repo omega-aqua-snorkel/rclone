@@ -17,7 +17,7 @@ Configure
 
 First, you'll need to configure rclone.  As the object storage systems
 have quite complicated authentication these are kept in a config file.
-(See the [`--config`](#config) entry for how to find the config
+(See the [`--config`](#config-string) entry for how to find the config
 file and choose its location.)
 
 The easiest way to make the config is to run rclone with the config
@@ -689,7 +689,7 @@ See also [--human-readable](#human-readable).
 Main options
 ------------
 
-### --backup-dir
+### --backup-dir string
 
 When using `sync`, `copy` or `move` any files which would have been
 overwritten or deleted are moved in their original hierarchy into this
@@ -859,7 +859,7 @@ Set to `0` to disable the buffering for the minimum memory usage.
 Note that the memory allocation of the buffers is influenced by the
 [--use-mmap](#use-mmap) flag.
 
-### --cache-dir
+### --cache-dir string
 
 Specify the directory rclone will use for caching, to override
 the default.
@@ -868,7 +868,7 @@ Default value is depending on operating system:
 - Windows `%LocalAppData%\rclone`, if `LocalAppData` is defined.
 - macOS `$HOME/Library/Caches/rclone` if `HOME` is defined.
 - Unix `$XDG_CACHE_HOME/rclone` if `XDG_CACHE_HOME` is defined, else `$HOME/.cache/rclone` if `HOME` is defined.
-- Fallback (on all OS) to `$TMPDIR/rclone`, where `TMPDIR` is the value from [--temp-dir](#temp-dir).
+- Fallback (on all OS) to `$TMPDIR/rclone`, where `TMPDIR` is the value from [--temp-dir](#temp-dir-string).
 
 You can use the [config paths](/commands/rclone_config_paths/)
 command to see the current value.
@@ -938,7 +938,7 @@ quicker than without the `--checksum` flag.
 When using this flag, rclone won't update mtimes of remote files if
 they are incorrect as it would normally.
 
-### --color
+### --color AUTO|NEVER|ALWAYS
 
 Specify when colors (and other ANSI codes) should be added to the output.
 
@@ -960,7 +960,7 @@ compare directory must not overlap the destination directory.
 
 See `--copy-dest` and `--backup-dir`.
 
-### --config
+### --config string
 
 Specify the location of the rclone configuration file, to override
 the default. E.g. `rclone config --config="rclone.conf"`.
@@ -1072,7 +1072,7 @@ The connection timeout is the amount of time rclone will wait for a
 connection to go through to a remote object storage system.  It is
 `1m` by default.
 
-### --copy-dest
+### --copy-dest stringArray
 
 When using `sync`, `copy` or `move` DIR is checked in addition to the
 destination for files. If a file identical to the source is found that
@@ -1085,11 +1085,12 @@ directory must not overlap the destination directory.
 
 See `--compare-dest` and `--backup-dir`.
 
-### --dedupe-mode
+### --dedupe-mode interactive|skip|first|newest|oldest|largest|smallest|rename|list
 
 Mode to run dedupe command in.  One of `interactive`, `skip`, `first`, 
-`newest`, `oldest`, `rename`.  The default is `interactive`.  
-See the dedupe command for more information as to what these options mean.
+`newest`, `oldest`, `largest`, `smallest`, `rename` `list`.  The default
+is `interactive`.   See the [dedupe](/commands/rclone_dedupe/) command
+for more information as to what these options mean.
 
 ### --default-time Time
 
@@ -1103,7 +1104,7 @@ For example `--default-time 2020-06-01` to set the default time to the
 1st of June 2020 or `--default-time 0s` to set the default time to the
 time rclone started up.
 
-### --disable
+### --disable string
 
 This disables a comma separated list of optional features. For example
 to disable server-side move and server-side copy use:
@@ -1144,7 +1145,7 @@ This stops rclone from trying to use HTTP/2 if available. This can
 sometimes speed up transfers due to a
 [problem in the Go standard library](https://github.com/golang/go/issues/37373).
 
-### --dscp
+### --dscp string
 
 Specify a DSCP value or name to use in connections. This could help QoS
 system to identify traffic class. BE, EF, DF, LE, CSx and AFxx are allowed.
@@ -1232,7 +1233,7 @@ This controls how often rclone checks for cached remotes to expire.
 See the `--fs-cache-expire-duration` documentation above for more
 info. The default is 60s, set to 0 to disable expiry.
 
-### --header
+### --header stringArray
 
 Add an HTTP header for all transactions. The flag can be repeated to
 add multiple headers.
@@ -1248,7 +1249,7 @@ as a workaround for those with care.
 rclone ls remote:test --header "X-Rclone: Foo" --header "X-LetMeIn: Yes"
 ```
 
-### --header-download
+### --header-download stringArray
 
 Add an HTTP header for all download transactions. The flag can be repeated to
 add multiple headers.
@@ -1260,7 +1261,7 @@ rclone sync --interactive s3:test/src ~/dst --header-download "X-Amz-Meta-Test: 
 See the GitHub issue [here](https://github.com/rclone/rclone/issues/59) for
 currently supported backends.
 
-### --header-upload
+### --header-upload stringArray
 
 Add an HTTP header for all upload transactions. The flag can be repeated to add
 multiple headers.
@@ -1479,7 +1480,7 @@ backends and the VFS. There are individual flags for just enabling it
 for the VFS `--vfs-links` and the local backend `--local-links` if
 required.
 
-### --log-file
+### --log-file string
 
 Log all of rclone's output to file.  This is not active by default.
 This can be useful for tracking down problems with syncs in
@@ -1492,7 +1493,7 @@ Note that if you are using the `logrotate` program to manage rclone's
 logs, then you should use the `copytruncate` option as rclone doesn't
 have a signal to rotate logs.
 
-### --log-format
+### --log-format string
 
 Comma separated list of log format options. Accepted options are `date`, 
 `time`, `microseconds`, `pid`, `longfile`, `shortfile`, `UTC`. Any other 
@@ -1501,7 +1502,7 @@ identifier which useful with `rclone mount --daemon`. Other accepted
 options are explained in the [go documentation](https://pkg.go.dev/log#pkg-constants).
 The default log format is "`date`,`time`".
 
-### --log-level
+### --log-level LogLevel
 
 This sets the log level for rclone.  The default log level is `NOTICE`.
 
@@ -1516,6 +1517,8 @@ outputs very little when things are working normally. It outputs
 warnings and significant events.
 
 `ERROR` is equivalent to `-q`. It only outputs error messages.
+
+See also the [logging](#logging) section.
 
 ### --use-json-log
 
@@ -1610,7 +1613,7 @@ Use `--cutoff-mode` to modify this behaviour.
 
 Rclone will exit with exit code 8 if the transfer limit is reached.
 
-### --cutoff-mode
+### --cutoff-mode HARD|SOFT|CAUTIOUS
 
 Set to value `hard`, `soft` or `cautious` to configure the behavior
 of `--max-transfer` and `--max-duration`.
@@ -1969,7 +1972,7 @@ If you want perfect ordering then you will need to specify
 [--check-first](#check-first) which will find all the files which need
 transferring first before transferring any.
 
-### --partial-suffix {#partial-suffix}
+### --partial-suffix string {#partial-suffix}
 
 When [--inplace](#inplace) is not used, it causes rclone to use
 the `--partial-suffix` as suffix for temporary files.
@@ -2132,19 +2135,19 @@ info on log levels.
 Note that on macOS you can send a SIGINFO (which is normally ctrl-T in
 the terminal) to make the stats print immediately.
 
-### --stats-file-name-length
+### --stats-file-name-length int
 By default, the `--stats` output will truncate file names and paths longer
 than 40 characters.  This is equivalent to providing
 `--stats-file-name-length 40`. Use `--stats-file-name-length 0` to disable
 any truncation of file names printed by stats.
 
-### --stats-log-level
+### --stats-log-level LogLevel
 
 Log level to show `--stats` output at.  This can be `DEBUG`, `INFO`,
 `NOTICE`, or `ERROR`.  The default is `INFO`.  This means at the
-default level of logging which is `NOTICE` the stats won't show - if
-you want them to then use `--stats-log-level NOTICE`.  See the [Logging
-section](#logging) for more info on log levels.
+default level of logging, which is `NOTICE`, the stats won't show - if
+you want them to then use `--stats-log-level NOTICE`.  See the
+[logging](#logging) section for more details on log levels.
 
 ### --stats-one-line
 
@@ -2156,14 +2159,14 @@ showing the most important stats only.
 When this is specified, rclone enables the single-line stats and prepends
 the display with a date string. The default is `2006/01/02 15:04:05 - `
 
-### --stats-one-line-date-format
+### --stats-one-line-date-format string
 
 When this is specified, rclone enables the single-line stats and prepends
 the display with a user-supplied date string. The date string MUST be
 enclosed in quotes. Follow [golang specs](https://golang.org/pkg/time/#Time.Format) for
 date formatting syntax.
 
-### --stats-unit
+### --stats-unit string
 
 By default, data transfer rates will be printed in bytes per second,
 corresponding to `--stats-unit bytes`.
@@ -2175,7 +2178,7 @@ reported in bytes.
 The rate is reported as a binary unit, not SI unit. So 1 Mbit/s
 equals 1,048,576 bit/s and not 1,000,000 bit/s.
 
-### --suffix
+### --suffix string
 
 When using `sync`, `copy` or `move` any files which would have been
 overwritten or deleted will have the suffix added to them.  If there
@@ -2229,7 +2232,7 @@ If using `--syslog` this sets the syslog facility (e.g. `KERN`, `USER`).
 See `man syslog` for a list of possible facilities.  The default
 facility is `DAEMON`.
 
-### --temp-dir
+### --temp-dir string
 
 Specify the directory rclone will use for temporary files, to override
 the default. Make sure the directory exists and have accessible permissions.
@@ -2324,7 +2327,7 @@ Note also that `--track-renames` is incompatible with
 `--delete-before` and will select `--delete-after` instead of
 `--delete-during`.
 
-### --track-renames-strategy
+### --track-renames-strategy string
 
 This option changes the file matching criteria for `--track-renames`.
 
@@ -2404,7 +2407,7 @@ may be a huge advantage.
 Rclone is not able to take all relevant parameters into account for deciding
 the best strategy, and therefore allows you to influence the choice in two ways:
 You can stop rclone from using `ListR` by disabling the feature, using the
-[--disable](#disable) option (`--disable ListR`), or you can
+[--disable](#disable-string) option (`--disable ListR`), or you can
 allow rclone to use `ListR` where it would normally choose not to do so due to
 higher memory usage, using the `--fast-list` option. Rclone should always
 produce identical results either way. Using `--disable ListR` or `--fast-list`
@@ -2671,7 +2674,7 @@ a valid password, and `--password-command` has not been supplied.
 
 Whenever running commands that may be affected by options in a
 configuration file, rclone will look for an existing file according
-to the rules described [above](#config), and load any it
+to the rules described [above](#config-string), and load any it
 finds. If an encrypted file is found, this includes decrypting it,
 with the possible consequence of a password prompt. When executing
 a command line that you know are not actually using anything from such
@@ -2751,11 +2754,11 @@ are also some more remote specific options which aren't documented
 here which are used for testing.  These start with remote name e.g.
 `--drive-test-option` - see the docs for the remote in question.
 
-### --cpuprofile
+### --cpuprofile string
 
 Write CPU profile to file.  This can be analysed with `go tool pprof`.
 
-### --memprofile
+### --memprofile string
 
 Write memory profile to file. This can be analysed with `go tool pprof`.
 
