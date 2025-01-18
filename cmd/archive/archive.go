@@ -27,7 +27,7 @@ func init() {
 	// create flags
 	createFlags := createCommand.Flags()
 	flags.BoolVarP(createFlags, &fullpath, "fullpath", "", fullpath, "Set prefix for files in archive to source path", "")
-	flags.StringVarP(createFlags, &prefix, "prefix", "", prefix, "Set prefix for files in archive to entered value", "")
+	flags.StringVarP(createFlags, &prefix, "prefix", "", prefix, "Set prefix for files in archive to entered value or source path", "")
 	flags.StringVarP(createFlags, &format, "format", "", format, "Compress the archive using the selected format. If not set will try and guess from extension. Use 'rclone archive create --help' for the supported formats", "")
 	// list flags
 	listFlags := listCommand.Flags()

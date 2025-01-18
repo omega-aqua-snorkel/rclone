@@ -253,13 +253,13 @@ func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.F
 	}
 	// if we are here dst points to a non existing path
 	// we must check if parent is a valid directory
-	fs.Debugf(dst, "check if add to archive %s\n", getRemoteFromFs(dst, dstFile))
+	fs.Debugf(dst, "%s does not exist, check if parent is a valid directory\n", getRemoteFromFs(dst, dstFile))
 	parentDir, parentFile := path.Split(getRemoteFromFs(dst, dstFile))
 	dst, dstFile = cmd.NewFsFile(parentDir)
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
-		// parent is a directory
-		// file does not exist, we are creating is, all is good
+		// parent is a file
+		// we cant use this, not good
 		fs.Debugf(dst, "%s invalid - parent is a file\n", getRemoteFromFs(dst, dstFile))
 		return dst, parentFile, fmt.Errorf("can't create %s, %s is a file", parentFile, parentDir)
 	} else if errors.Is(err, fs.ErrorIsDir) {
