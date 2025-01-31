@@ -189,7 +189,7 @@ func objectToFileInfo(ctx context.Context, entry fs.Object, prefix string) archi
 			// fs.File, tr.Done() is called in fs.File.Close()
 			f := files.NewFile(ctx, fi, in, tr)
 			//
-			fs.Infof(nil,"add %s\n", name)
+			fs.Infof(nil, "add %s\n", name)
 			//
 			return f, nil
 		},
