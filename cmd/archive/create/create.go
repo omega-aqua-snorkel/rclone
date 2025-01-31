@@ -150,7 +150,7 @@ func getCompressor(format string, filename string) (archives.CompressedArchive, 
 	return archives.CompressedArchive{}, fmt.Errorf("invalid format '%s'", format)
 }
 
-func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, prefix string) archives.FileInfo {
+func objectToFileInfo(ctx context.Context, entry fs.Object, prefix string) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -189,14 +189,14 @@ func objectToFileInfo(ctx context.Context, src fs.Fs, entry fs.Object, prefix st
 			// fs.File, tr.Done() is called in fs.File.Close()
 			f := files.NewFile(ctx, fi, in, tr)
 			//
-			fs.Infof(src, "add to archive %s\n", name)
+			fs.Infof(nil,"add %s\n", name)
 			//
 			return f, nil
 		},
 	}
 }
 
-func directoryToFileInfo(ctx context.Context, src fs.Fs, entry fs.DirEntry, prefix string) archives.FileInfo {
+func directoryToFileInfo(ctx context.Context, entry fs.DirEntry, prefix string) archives.FileInfo {
 	// get entry type
 	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
 	// fill structure
@@ -238,38 +238,38 @@ func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.F
 	if err == nil {
 		// dst is a valid directory, dstFile is a valid file
 		// we are overwriting the file, all is well
-		fs.Debugf(dst, "%s valid (file exist)\n", getRemoteFromFs(dst, dstFile))
+		fs.Debugf(nil, "%s valid (file exist)\n", getRemoteFromFs(dst, dstFile))
 		return dst, dstFile, nil
 	} else if errors.Is(err, fs.ErrorIsDir) {
 		// dst is a directory
 		// we need a file name, not good
-		fs.Debugf(dst, "%s invalid\n", getRemoteFromFs(dst, dstFile))
+		fs.Debugf(nil, "%s invalid\n", getRemoteFromFs(dst, dstFile))
 		return dst, dstFile, fmt.Errorf("%s %w", getRemoteFromFs(dst, dstFile), err)
 	} else if !errors.Is(err, fs.ErrorObjectNotFound) {
 		// dst is a directory (we need a filename) or some other error happened
 		// not good, leave
-		fs.Debugf(dst, "%s invalid - %v\n", getRemoteFromFs(dst, dstFile), err)
+		fs.Debugf(nil, "%s invalid - %v\n", getRemoteFromFs(dst, dstFile), err)
 		return dst, "", fmt.Errorf("%s is invalid: %w", getRemoteFromFs(dst, dstFile), err)
 	}
 	// if we are here dst points to a non existing path
 	// we must check if parent is a valid directory
-	fs.Debugf(dst, "%s does not exist, check if parent is a valid directory\n", getRemoteFromFs(dst, dstFile))
+	fs.Debugf(nil, "%s does not exist, check if parent is a valid directory\n", getRemoteFromFs(dst, dstFile))
 	parentDir, parentFile := path.Split(getRemoteFromFs(dst, dstFile))
 	dst, dstFile = cmd.NewFsFile(parentDir)
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
 		// parent is a file
 		// we cant use this, not good
-		fs.Debugf(dst, "%s invalid - parent is a file\n", getRemoteFromFs(dst, dstFile))
+		fs.Debugf(nil, "%s invalid - parent is a file\n", getRemoteFromFs(dst, dstFile))
 		return dst, parentFile, fmt.Errorf("can't create %s, %s is a file", parentFile, parentDir)
 	} else if errors.Is(err, fs.ErrorIsDir) {
 		// parent is a directory
 		// file does not exist, we are creating is, all is good
-		fs.Debugf(dst, "%s valid - parent is a dir, file does not exist\n", getRemoteFromFs(dst, dstFile))
+		fs.Debugf(nil, "%s valid - parent is a dir, file does not exist\n", getRemoteFromFs(dst, dstFile))
 		return dst, parentFile, nil
 	}
 	// something else happened
-	fs.Debugf(dst, "%s invalid - %v\n", getRemoteFromFs(dst, dstFile), err)
+	fs.Debugf(nil, "%s invalid - %v\n", getRemoteFromFs(dst, dstFile), err)
 	return dst, parentFile, fmt.Errorf("invalid parent dir %s: %w", parentDir, err)
 }
 
@@ -294,12 +294,12 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
-			fi := directoryToFileInfo(ctx, src, o, prefix)
+			fi := directoryToFileInfo(ctx, o, prefix)
 			list = append(list, fi)
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
-			fi := objectToFileInfo(ctx, src, o, prefix)
+			fi := objectToFileInfo(ctx, o, prefix)
 			list = append(list, fi)
 		})
 		return nil

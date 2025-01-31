@@ -33,7 +33,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	} else if err != nil {
 		return fmt.Errorf("unable to access source, %w", err)
 	}
-	fs.Debugf(src, "Source archive file: %s/%s", src.Root(), srcFile)
+	fs.Debugf(nil,"Source archive file: %s/%s", src.Root(), srcFile)
 	// get dst object
 	_, err = dst.NewObject(ctx, dstFile)
 	if err == nil {
@@ -45,7 +45,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	}
 	//
 	err = nil
-	fs.Debugf(dst, "Destination for extracted files: %s", dst.Root())
+	fs.Debugf(nil,"Destination for extracted files: %s", dst.Root())
 	// start accounting
 	tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
 	defer tr.Done(ctx, err)
@@ -67,7 +67,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 	if err != nil {
 		return fmt.Errorf("failed to open check file type, %w", err)
 	}
-	fs.Debugf(src, "Extract %s/%s, format %s to %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."), dst.Root())
+	fs.Debugf(nil,"Extract %s/%s, format %s to %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."), dst.Root())
 
 	// check if extract is supported by format
 	ex, isExtract := format.(archives.Extraction)
@@ -85,7 +85,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 			// directory, try and crerate it
 			err := operations.Mkdir(ctx, dst, f.NameInArchive)
 			if err == nil {
-				fs.Infof(src, "created dir %s\n", f.NameInArchive)
+				fs.Debugf(nil,"mkdir %s\n", f.NameInArchive)
 			}
 		} else {
 			// file, open it
@@ -96,7 +96,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 			// extract the file to destination
 			_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
 			if err == nil {
-				fs.Infof(src, "extracted %s\n", f.NameInArchive)
+				fs.Infof(nil,"extract %s\n", f.NameInArchive)
 			}
 		}
 		return err

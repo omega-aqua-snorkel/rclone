@@ -27,15 +27,18 @@ func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) 
 	if err != nil {
 		return fmt.Errorf("source is not a file, %w", err)
 	}
-	// start accounting
+        fs.Debugf(nil,"Source archive file: %s/%s", src.Root(), srcFile)
+ 	// start accounting
 	tr := accounting.Stats(ctx).NewTransfer(srcObj, nil)
-	defer tr.Done(ctx, err)
+	defer func(){
+		tr.Done(ctx, err)
+	}()
 	// open source
 	var options []fs.OpenOption
 	for _, option := range fs.GetConfig(ctx).DownloadHeaders {
 		options = append(options, option)
 	}
-	var in io.ReadCloser
+	var in io.ReadSeekCloser
 	in, err = operations.Open(ctx, srcObj, options...)
 	if err != nil {
 		return fmt.Errorf("failed to open file %s: %w", srcFile, err)
@@ -48,7 +51,7 @@ func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) 
 	if err != nil {
 		return fmt.Errorf("failed to open check file type, %w", err)
 	}
-	fs.Debugf(src, "Listing %s/%s, format %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."))
+	fs.Debugf(nil,"Listing %s/%s, format %s", src.Root(), srcFile, strings.TrimPrefix(format.Extension(), "."))
 	// check if extract is supported by format
 	ex, isExtract := format.(archives.Extraction)
 	if !isExtract {

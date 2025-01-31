@@ -373,7 +373,7 @@ func (acc *Account) read(in io.Reader, p []byte) (n int, err error) {
 func (acc *Account) seek(in io.Reader, offset int64, whence int) (int64, error) {
 	seeker, ok := in.(io.Seeker)
 	if !ok {
-		return 0, fmt.Errorf("Seek not implemented")
+		return 0, fmt.Errorf("Seek not implemented in %T",in)
 	}
 	return seeker.Seek(offset, whence)
 }
