@@ -48,6 +48,7 @@ require (
 	github.com/koofr/go-koofrclient v0.0.0-20221207135200-cbd7fc9ad6a6
 	github.com/mattn/go-colorable v0.1.13
 	github.com/mattn/go-runewidth v0.0.16
+	github.com/mholt/archives v0.0.0-20241226194006-fc8400ac3529
 	github.com/minio/minio-go/v7 v7.0.74
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/moby/sys/mountinfo v0.7.2
@@ -178,7 +179,6 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20231016141302-07b5767bb0ed // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mholt/archives v0.0.0-20241226194006-fc8400ac3529 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/nwaples/rardecode/v2 v2.0.0-beta.4.0.20241112120701-034e449c6e78 // indirect
