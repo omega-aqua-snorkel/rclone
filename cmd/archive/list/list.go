@@ -44,7 +44,8 @@ func ArchiveList(ctx context.Context, src fs.Fs, srcFile string, longList bool) 
 		return fmt.Errorf("failed to open file %s: %w", srcFile, err)
 	}
 	// account and buffer the transfer
-	in = tr.Account(ctx, in).WithBuffer()
+	// in = tr.Account(ctx, in).WithBuffer()
+	in = tr.Account(ctx, in)
 	// identify format
 	format, _, err := archives.Identify(ctx, "", in)
 	//
