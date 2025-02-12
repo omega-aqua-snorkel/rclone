@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	stdfs "io/fs"
 	"os"
 	"path"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -93,6 +91,7 @@ var (
 		// tar.sz
 		"*.tar.sz": "tar.sz",
 	}
+	filesAdded = 0
 )
 
 type archivesFileInfoList []archives.FileInfo
@@ -150,79 +149,6 @@ func getCompressor(format string, filename string) (archives.CompressedArchive, 
 	return archives.CompressedArchive{}, fmt.Errorf("invalid format '%s'", format)
 }
 
-func objectToFileInfo(ctx context.Context, entry fs.Object, prefix string) archives.FileInfo {
-	// get entry type
-	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
-	// fill structure
-	name := entry.Remote()
-	size := entry.Size()
-	mtime := entry.ModTime(ctx)
-	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if prefix != "" {
-		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
-	}
-	// get entry metadata, not used right now
-	// metadata,_ := fs.GetMetadata(ctx, entry)
-	//
-	var fi = files.NewFileInfo(name, size, mtime, isDir)
-	//
-	return archives.FileInfo{
-		FileInfo:      fi,
-		NameInArchive: name,
-		LinkTarget:    "",
-		Open: func() (stdfs.File, error) {
-			var err error
-			//
-			tr := accounting.Stats(ctx).NewTransfer(entry, nil)
-			var options []fs.OpenOption
-			for _, option := range fs.GetConfig(ctx).DownloadHeaders {
-				options = append(options, option)
-			}
-			var in io.ReadCloser
-			in, err = operations.Open(ctx, entry, options...)
-			if err != nil {
-				defer tr.Done(ctx, err)
-				return nil, fmt.Errorf("failed to open file %s: %w", name, err)
-			}
-			// Account and buffer the transfer
-			in = tr.Account(ctx, in).WithBuffer()
-			// fs.File, tr.Done() is called in fs.File.Close()
-			f := files.NewFile(ctx, fi, in, tr)
-			//
-			fs.Infof(nil, "add %s\n", name)
-			//
-			return f, nil
-		},
-	}
-}
-
-func directoryToFileInfo(ctx context.Context, entry fs.DirEntry, prefix string) archives.FileInfo {
-	// get entry type
-	dirType := reflect.TypeOf((*fs.Directory)(nil)).Elem()
-	// fill structure
-	name := path.Join(entry.Remote())
-	size := entry.Size()
-	mtime := entry.ModTime(ctx)
-	isDir := reflect.TypeOf(entry).Implements(dirType)
-	if prefix != "" {
-		name = path.Join(strings.TrimPrefix(prefix, "/"), name)
-	}
-	name += "/"
-	// get entry metadata, not used right now
-	// metadata,_ := fs.GetMetadata(ctx, entry)
-	//
-	var fi = files.NewFileInfo(name, size, mtime, isDir)
-	//
-	return archives.FileInfo{
-		FileInfo:      fi,
-		NameInArchive: name,
-		LinkTarget:    "",
-		Open: func() (stdfs.File, error) {
-			return nil, fmt.Errorf("%s is not a file", name)
-		},
-	}
-}
-
 func getRemoteFromFs(src fs.Fs, dstFile string) string {
 	if src.Features().IsLocal {
 		return path.Join(src.Root(), dstFile)
@@ -273,6 +199,13 @@ func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.F
 	return dst, parentFile, fmt.Errorf("invalid parent dir %s: %w", parentDir, err)
 }
 
+func onProgress(snapshot accounting.TransferSnapshot, action int) {
+	if action == files.Closing {
+		fs.Printf(nil, "Add %s", snapshot.Name)
+		filesAdded++
+	}
+}
+
 // ArchiveCreate - compresses/archive source to destination
 func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string, format string, prefix string) error {
 	var err error
@@ -294,12 +227,12 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
-			fi := directoryToFileInfo(ctx, o, prefix)
+			fi := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
 			list = append(list, fi)
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
-			fi := objectToFileInfo(ctx, o, prefix)
+			fi := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
 			list = append(list, fi)
 		})
 		return nil
@@ -321,8 +254,11 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 		}()
 		// rcat to remote from pipereader
 		_, err = operations.Rcat(ctx, dst, dstFile, pipeReader, time.Now(), nil)
+		fs.Printf(nil, "Total files added %d", filesAdded)
 		return err
 	}
 	// write to stdout
-	return compArchive.Archive(ctx, os.Stdout, list)
+	err = compArchive.Archive(ctx, os.Stdout, list)
+	fs.Printf(nil, "Total files added %d", filesAdded)
+	return err
 }

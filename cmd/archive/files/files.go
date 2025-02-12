@@ -6,11 +6,25 @@ import (
 	"fmt"
 	"io"
 	stdfs "io/fs"
+	"path"
+	"strings"
 	"time"
 
 	"archive/tar"
 
+	"github.com/mholt/archives"
+	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/fs/operations"
+)
+
+const (
+	// Opening flag used to inform ProgressHandler that we are opening the file
+	Opening = 1
+	// Reading flag used to inform ProgressHandler that we are reading from the file
+	Reading = 2
+	// Closing flag used to inform ProgressHandler that we are closing the file
+	Closing = 3
 )
 
 // not using this, not all backends have uid/gid so is this even worth it?
@@ -75,6 +89,9 @@ func metadataToHeader(metadata map[string]string,header *tar.Header){
 
 // structs for fs.FileInfo,fs.File,SeekableFile
 
+// ProgressCallback used to inform the status of the file
+type ProgressCallback func(info accounting.TransferSnapshot, action int)
+
 type fileInfoImpl struct {
 	header *tar.Header
 }
@@ -84,17 +101,22 @@ type fileImpl struct {
 	ctx      context.Context
 	reader   io.ReadCloser
 	transfer *accounting.Transfer
+	progress ProgressCallback
 	err      error
 }
 
-// NewFileInfo - create a fs.FileInfo compatible struct
-func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.FileInfo {
+func newFileInfo(ctx context.Context, entry fs.DirEntry, prefix string) stdfs.FileInfo {
 	var fi = new(fileInfoImpl)
 	//
 	fi.header = new(tar.Header)
-	fi.header.Name = name
-	fi.header.Size = size
+	if prefix != "" {
+		fi.header.Name = path.Join(strings.TrimPrefix(prefix, "/"), entry.Remote())
+	} else {
+		fi.header.Name = entry.Remote()
+	}
+	fi.header.Size = entry.Size()
 	fi.header.Mode = 0666
+	_, isDir := entry.(fs.Directory)
 	if isDir {
 		fi.header.Mode = int64(stdfs.ModeDir) | fi.header.Mode
 	}
@@ -102,9 +124,9 @@ func NewFileInfo(name string, size int64, mtime time.Time, isDir bool) stdfs.Fil
 	fi.header.Gid = 0
 	fi.header.Uname = "root"
 	fi.header.Gname = "root"
-	fi.header.ModTime = mtime
-	fi.header.AccessTime = mtime
-	fi.header.ChangeTime = mtime
+	fi.header.ModTime = entry.ModTime(ctx)
+	fi.header.AccessTime = entry.ModTime(ctx)
+	fi.header.ChangeTime = entry.ModTime(ctx)
 	//
 	return fi
 }
@@ -137,17 +159,58 @@ func (a *fileInfoImpl) String() string {
 	return fmt.Sprintf("Name=%v Size=%v IsDir=%v UID=%v GID=%v", a.Name(), a.Size(), a.IsDir(), a.header.Uid, a.header.Gid)
 }
 
+// NewArchiveFileInfo will take a fs.DirEntry and return a archives.Fileinfo
+func NewArchiveFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, progress ProgressCallback) archives.FileInfo {
+	fi := newFileInfo(ctx, entry, prefix)
+	//
+	return archives.FileInfo{
+		FileInfo:      fi,
+		NameInArchive: fi.Name(),
+		LinkTarget:    "",
+		Open: func() (stdfs.File, error) {
+			obj, isObject := entry.(fs.Object)
+			if isObject {
+				return NewFile(ctx, obj, fi, progress)
+			}
+			return nil, fmt.Errorf("%s is not a file", fi.Name())
+		},
+	}
+
+}
+
 // NewFile - create a fs.File compatible struct
-func NewFile(ctx context.Context, entry stdfs.FileInfo, reader io.ReadCloser, transfer *accounting.Transfer) stdfs.File {
+func NewFile(ctx context.Context, obj fs.Object, fi stdfs.FileInfo, progress ProgressCallback) (stdfs.File, error) {
 	var f = new(fileImpl)
-	//
-	f.entry = entry
+	// create stdfs.File
+	f.entry = fi
 	f.ctx = ctx
-	f.reader = reader
-	f.transfer = transfer
 	f.err = nil
+	f.progress = progress
+	// create transfer
+	f.transfer = accounting.Stats(ctx).NewTransfer(obj, nil)
+	// get open options
+	var options []fs.OpenOption
+	for _, option := range fs.GetConfig(ctx).DownloadHeaders {
+		options = append(options, option)
+	}
+	// open file
+	f.reader, f.err = operations.Open(ctx, obj, options...)
+	if f.err != nil {
+		defer f.transfer.Done(ctx, f.err)
+		return nil, f.err
+	}
+	// Account the transfer
+	f.reader = f.transfer.Account(ctx, f.reader)
+	// refresh
+	f.Update(Opening)
 	//
-	return f
+	return f, f.err
+}
+
+func (a *fileImpl) Update(action int) {
+	if a.progress != nil && a.transfer != nil {
+		a.progress(a.transfer.Snapshot(), action)
+	}
 }
 
 func (a *fileImpl) Stat() (stdfs.FileInfo, error) {
@@ -160,6 +223,7 @@ func (a *fileImpl) Read(data []byte) (int, error) {
 		return 0, a.err
 	}
 	i, err := a.reader.Read(data)
+	a.Update(Reading)
 	a.err = err
 	return i, a.err
 }
@@ -172,8 +236,8 @@ func (a *fileImpl) Close() error {
 		a.err = a.reader.Close()
 	}
 	// close transfer
-	if a.transfer != nil {
-		a.transfer.Done(a.ctx, a.err)
-	}
+	a.Update(Closing)
+	a.transfer.Done(a.ctx, a.err)
+	//
 	return a.err
 }

@@ -15,6 +15,8 @@ import (
 	"github.com/rclone/rclone/fs/operations"
 )
 
+var filesExtracted = 0
+
 func init() {
 }
 
@@ -86,7 +88,7 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 			// directory, try and crerate it
 			err := operations.Mkdir(ctx, dst, f.NameInArchive)
 			if err == nil {
-				fs.Debugf(nil, "mkdir %s\n", f.NameInArchive)
+				fs.Debugf(nil, "mkdir %s", f.NameInArchive)
 			}
 		} else {
 			// file, open it
@@ -97,11 +99,15 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 			// extract the file to destination
 			_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
 			if err == nil {
-				fs.Infof(nil, "extract %s\n", f.NameInArchive)
+				fs.Printf(nil, "Extract %s", f.NameInArchive)
+				filesExtracted++
 			}
 		}
 		return err
 	})
+	//
+	fs.Printf(nil, "Total files extracted %d", filesExtracted)
+
 	//
 	return err
 }
