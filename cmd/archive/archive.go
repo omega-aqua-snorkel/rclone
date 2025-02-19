@@ -164,22 +164,22 @@ the contents of the archive will be:
 	},
 	Run: func(command *cobra.Command, args []string) {
 		var src, dst fs.Fs
-		var srcFile, dstFile string
+		var dstFile string
 		if len(args) == 1 { // source only, archive to stdout
-			src, srcFile = cmd.NewFsFile(args[0])
+			src = cmd.NewFsSrc(args)
 		} else if len(args) == 2 {
-			src, srcFile = cmd.NewFsFile(args[0])
+			src = cmd.NewFsSrc(args)
 			dst, dstFile = cmd.NewFsFile(args[1])
 		} else {
 			cmd.CheckArgs(1, 2, command, args)
 		}
 		cmd.Run(false, false, command, func() error {
 			if prefix != "" {
-				return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, prefix)
+				return create.ArchiveCreate(context.Background(), src, dst, dstFile, format, prefix)
 			} else if fullpath {
-				return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, src.Root())
+				return create.ArchiveCreate(context.Background(), src, dst, dstFile, format, src.Root())
 			}
-			return create.ArchiveCreate(context.Background(), src, srcFile, dst, dstFile, format, "")
+			return create.ArchiveCreate(context.Background(), src, dst, dstFile, format, "")
 		})
 	},
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/rclone/rclone/cmd/archive/files"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/fs/filter"
 	"github.com/rclone/rclone/fs/operations"
 	"github.com/rclone/rclone/fs/walk"
 )
@@ -206,8 +207,16 @@ func onProgress(snapshot accounting.TransferSnapshot, action int) {
 	}
 }
 
+func loadMetadata(ctx context.Context, o fs.DirEntry) fs.Metadata {
+	meta, err := fs.GetMetadata(ctx, o)
+	if err != nil {
+		meta = make(fs.Metadata, 0)
+	}
+	return meta
+}
+
 // ArchiveCreate - compresses/archive source to destination
-func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string, format string, prefix string) error {
+func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, format string, prefix string) error {
 	var err error
 	var list archivesFileInfoList
 	var compArchive archives.CompressedArchive
@@ -218,6 +227,8 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 			return err
 		}
 	}
+	//
+	fi := filter.GetConfig(ctx)
 	// get archive format
 	compArchive, err = getCompressor(format, dstFile)
 	if err != nil {
@@ -227,13 +238,17 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, ds
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
-			fi := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
-			list = append(list, fi)
+			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
+				info := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
+				list = append(list, info)
+			}
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
-			fi := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
-			list = append(list, fi)
+			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
+				info := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
+				list = append(list, info)
+			}
 		})
 		return nil
 	})
