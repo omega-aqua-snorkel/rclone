@@ -2,15 +2,15 @@
 package files
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
 	"io"
 	stdfs "io/fs"
 	"path"
 	"strings"
+	"sync/atomic"
 	"time"
-
-	"archive/tar"
 
 	"github.com/mholt/archives"
 	"github.com/rclone/rclone/fs"
@@ -240,4 +240,39 @@ func (a *fileImpl) Close() error {
 	a.transfer.Done(a.ctx, a.err)
 	//
 	return a.err
+}
+
+// CountWriter will counts bytes written
+type CountWriter struct {
+	count uint64
+	io.Writer
+}
+
+// NewCountWriter will create a writer that counts bytes written
+func NewCountWriter(w io.Writer) *CountWriter {
+	return &CountWriter{
+		Writer: w,
+	}
+}
+
+func (w *CountWriter) Write(buf []byte) (int, error) {
+	var n int
+	var err error
+	// if writer is null just count
+	if w.Writer == nil {
+		n = len(buf)
+		err = nil
+	} else {
+		n, err = w.Writer.Write(buf)
+	}
+	// add bytes written
+	if n >= 0 {
+		atomic.AddUint64(&w.count, uint64(n))
+	}
+	return n, err
+}
+
+// Count returns total bytes written to writer
+func (w *CountWriter) Count() uint64 {
+	return atomic.LoadUint64(&w.count)
 }

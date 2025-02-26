@@ -15,17 +15,17 @@ import (
 	"github.com/rclone/rclone/fs/operations"
 )
 
-var filesExtracted = 0
-
 func init() {
 }
 
 // ArchiveExtract -- extracts files from source to destination
 func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, dstFile string) error {
 	var srcObj fs.Object
+	var filesExtracted = 0
 	var err error
 	//
 	fi := filter.GetConfig(ctx)
+	ci := fs.GetConfig(ctx)
 	// get source object
 	srcObj, err = src.NewObject(ctx, srcFile)
 	if errors.Is(err, fs.ErrorIsDir) {
@@ -83,31 +83,38 @@ func ArchiveExtract(ctx context.Context, src fs.Fs, srcFile string, dst fs.Fs, d
 		if !fi.Include(f.NameInArchive, f.Size(), f.ModTime(), fs.Metadata{}) {
 			return nil
 		}
-		//
+		// process directory
 		if f.IsDir() {
-			// directory, try and crerate it
-			err := operations.Mkdir(ctx, dst, f.NameInArchive)
-			if err == nil {
-				fs.Debugf(nil, "mkdir %s", f.NameInArchive)
+			// directory
+			fs.Debugf(nil, "mkdir %s", f.NameInArchive)
+			// leave if --dry-run set
+			if ci.DryRun {
+				return nil
 			}
-		} else {
-			// file, open it
-			fin, err := f.Open()
-			if err != nil {
-				return err
-			}
-			// extract the file to destination
-			_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
-			if err == nil {
-				fs.Printf(nil, "Extract %s", f.NameInArchive)
-				filesExtracted++
-			}
+			// create the directory
+			return operations.Mkdir(ctx, dst, f.NameInArchive)
+		}
+		// process file
+		fs.Debugf(nil, "Extract %s", f.NameInArchive)
+		// leave if --dry-run set
+		if ci.DryRun {
+			filesExtracted++
+			return nil
+		}
+		// open file
+		fin, err := f.Open()
+		if err != nil {
+			return err
+		}
+		// extract the file to destination
+		_, err = operations.Rcat(ctx, dst, f.NameInArchive, fin, f.ModTime(), nil)
+		if err == nil {
+			filesExtracted++
 		}
 		return err
 	})
 	//
 	fs.Printf(nil, "Total files extracted %d", filesExtracted)
-
 	//
 	return err
 }

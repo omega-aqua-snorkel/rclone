@@ -92,8 +92,9 @@ var (
 		// tar.sz
 		"*.tar.sz": "tar.sz",
 	}
-	filesAdded = 0
 )
+
+// sorted FileInfo list
 
 type archivesFileInfoList []archives.FileInfo
 
@@ -114,6 +115,8 @@ func (a archivesFileInfoList) Less(i, j int) bool {
 func (a archivesFileInfoList) Swap(i, j int) {
 	a[i], a[j] = a[j], a[i]
 }
+
+//
 
 func init() {
 }
@@ -200,13 +203,6 @@ func CheckValidDestination(ctx context.Context, dst fs.Fs, dstFile string) (fs.F
 	return dst, parentFile, fmt.Errorf("invalid parent dir %s: %w", parentDir, err)
 }
 
-func onProgress(snapshot accounting.TransferSnapshot, action int) {
-	if action == files.Closing {
-		fs.Printf(nil, "Add %s", snapshot.Name)
-		filesAdded++
-	}
-}
-
 func loadMetadata(ctx context.Context, o fs.DirEntry) fs.Metadata {
 	meta, err := fs.GetMetadata(ctx, o)
 	if err != nil {
@@ -220,6 +216,8 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, fo
 	var err error
 	var list archivesFileInfoList
 	var compArchive archives.CompressedArchive
+	var totalLength int64
+	var callback files.ProgressCallback
 	// check id dst is valid
 	if dst != nil {
 		dst, dstFile, err = CheckValidDestination(ctx, dst, dstFile)
@@ -228,26 +226,34 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, fo
 		}
 	}
 	//
+	ci := fs.GetConfig(ctx)
 	fi := filter.GetConfig(ctx)
 	// get archive format
 	compArchive, err = getCompressor(format, dstFile)
 	if err != nil {
 		return err
 	}
+	// set callback
+	callback = func(snapshot accounting.TransferSnapshot, action int) {
+		if action == files.Closing {
+			fs.Debugf(nil, "Add %s", snapshot.Name)
+		}
+	}
 	// get source files
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
 			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
-				info := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
+				info := files.NewArchiveFileInfo(ctx, o, prefix, callback)
 				list = append(list, info)
 			}
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
 			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
-				info := files.NewArchiveFileInfo(ctx, o, prefix, onProgress)
+				info := files.NewArchiveFileInfo(ctx, o, prefix, callback)
 				list = append(list, info)
+				totalLength += o.Size()
 			}
 		})
 		return nil
@@ -258,22 +264,42 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, fo
 		return fmt.Errorf("no files found in source")
 	}
 	sort.Stable(list)
-	// create destination
-	if dst != nil {
-		// create io.Pipe
-		pipeReader, pipeWriter := io.Pipe()
-		// write to pipewriter in background
-		go func() {
-			err := compArchive.Archive(ctx, pipeWriter, list)
-			pipeWriter.CloseWithError(err)
-		}()
-		// rcat to remote from pipereader
-		_, err = operations.Rcat(ctx, dst, dstFile, pipeReader, time.Now(), nil)
-		fs.Printf(nil, "Total files added %d", filesAdded)
+	// create archive
+	if ci.DryRun {
+		// write nowhere
+		counter := files.NewCountWriter(nil)
+		err = compArchive.Archive(ctx, counter, list)
+		// log totals
+		fs.Printf(nil, "Total files added %d", list.Len())
+		fs.Printf(nil, "Total bytes read %d", totalLength)
+		fs.Printf(nil, "Compressed file size %d", counter.Count())
+		//
+		return err
+	} else if dst == nil {
+		// write to stdout
+		counter := files.NewCountWriter(os.Stdout)
+		err = compArchive.Archive(ctx, counter, list)
+		// log totals
+		fs.Printf(nil, "Total files added %d", list.Len())
+		fs.Printf(nil, "Total bytes read %d", totalLength)
+		fs.Printf(nil, "Compressed file size %d", counter.Count())
+		//
 		return err
 	}
-	// write to stdout
-	err = compArchive.Archive(ctx, os.Stdout, list)
-	fs.Printf(nil, "Total files added %d", filesAdded)
+	// write to remote
+	pipeReader, pipeWriter := io.Pipe()
+	// write to pipewriter in background
+	counter := files.NewCountWriter(pipeWriter)
+	go func() {
+		err := compArchive.Archive(ctx, counter, list)
+		pipeWriter.CloseWithError(err)
+	}()
+	// rcat to remote from pipereader
+	_, err = operations.Rcat(ctx, dst, dstFile, pipeReader, time.Now(), nil)
+	// log totals
+	fs.Printf(nil, "Total files added %d", list.Len())
+	fs.Printf(nil, "Total bytes read %d", totalLength)
+	fs.Printf(nil, "Compressed file size %d", counter.Count())
+	//
 	return err
 }

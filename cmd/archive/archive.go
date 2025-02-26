@@ -69,7 +69,7 @@ var listCommand = &cobra.Command{
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.70",
 	},
-	Run: func(command *cobra.Command, args []string) {
+	RunE: func(command *cobra.Command, args []string) error {
 		cmd.CheckArgs(1, 1, command, args)
 		//
 		src, srcFile := cmd.NewFsFile(args[0])
@@ -77,7 +77,7 @@ var listCommand = &cobra.Command{
 		cmd.Run(false, false, command, func() error {
 			return list.ArchiveList(context.Background(), src, srcFile, longList)
 		})
-
+		return nil
 	},
 }
 
@@ -89,7 +89,7 @@ var extractCommand = &cobra.Command{
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.70",
 	},
-	Run: func(command *cobra.Command, args []string) {
+	RunE: func(command *cobra.Command, args []string) error {
 		cmd.CheckArgs(2, 2, command, args)
 		//
 		src, srcFile := cmd.NewFsFile(args[0])
@@ -98,7 +98,7 @@ var extractCommand = &cobra.Command{
 		cmd.Run(false, false, command, func() error {
 			return extract.ArchiveExtract(context.Background(), src, srcFile, dst, dstFile)
 		})
-
+		return nil
 	},
 }
 
@@ -162,7 +162,7 @@ the contents of the archive will be:
 	Annotations: map[string]string{
 		"versionIntroduced": "v1.70",
 	},
-	Run: func(command *cobra.Command, args []string) {
+	RunE: func(command *cobra.Command, args []string) error {
 		var src, dst fs.Fs
 		var dstFile string
 		if len(args) == 1 { // source only, archive to stdout
@@ -173,6 +173,7 @@ the contents of the archive will be:
 		} else {
 			cmd.CheckArgs(1, 2, command, args)
 		}
+		//
 		cmd.Run(false, false, command, func() error {
 			if prefix != "" {
 				return create.ArchiveCreate(context.Background(), src, dst, dstFile, format, prefix)
@@ -181,5 +182,6 @@ the contents of the archive will be:
 			}
 			return create.ArchiveCreate(context.Background(), src, dst, dstFile, format, "")
 		})
+		return nil
 	},
 }
