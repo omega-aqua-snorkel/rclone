@@ -8,6 +8,7 @@ import (
 	"io"
 	stdfs "io/fs"
 	"path"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -27,65 +28,86 @@ const (
 	Closing = 3
 )
 
-// not using this, not all backends have uid/gid so is this even worth it?
+// fill tar.Header with metadata if available (too bad username/groupname is not available)
 
-/*
-
-func metadataToHeader(metadata map[string]string,header *tar.Header){
+func metadataToHeader(metadata fs.Metadata, header *tar.Header) {
 	var val string
 	var ok bool
 	var err error
-	var mode,uid,gid int64
-	var atime,ctime time.Time
+	var mode, uid, gid int64
+	var atime, ctime time.Time
+	var uname, gname string
 	// check if metadata is valid
-	mode=0644
-	uid=0
-	gid=0
-	atime=time.Unix(0,0)
-	ctime=time.Unix(0,0)
 	if metadata != nil {
 		// mode
-	        val, ok = metadata["mode"]
-	        if ok == false {
-			mode=0644
-		}else{
-		        mode, err = strconv.ParseInt(val, 8, 64)
-		        if err != nil { mode = 0664 }
+		val, ok = metadata["mode"]
+		if !ok {
+			mode = 0644
+		} else {
+			mode, err = strconv.ParseInt(val, 8, 64)
+			if err != nil {
+				mode = 0664
+			}
 		}
 		// uid
-	        val, ok = metadata["uid"]
-	        if ok == false {
-			uid=0
-		}else{
-		        uid, err = strconv.ParseInt(val, 10, 32)
-		        if err != nil { uid = 0 }
+		val, ok = metadata["uid"]
+		if !ok {
+			uid = 0
+		} else {
+			uid, err = strconv.ParseInt(val, 10, 32)
+			if err != nil {
+				uid = 0
+			}
 		}
 		// gid
-	        val, ok = metadata["gid"]
-	        if ok == false {
-			gid=0
-		}else{
-		        gid, err = strconv.ParseInt(val, 10, 32)
-		        if err != nil { gid = 0 }
+		val, ok = metadata["gid"]
+		if !ok {
+			gid = 0
+		} else {
+			gid, err = strconv.ParseInt(val, 10, 32)
+			if err != nil {
+				gid = 0
+			}
 		}
 		// access time
-	        val, ok := metadata["atime"]
-	        if ok == false {
-			atime=time.Unix(0,0)
-		}else{
-		        atime, err = time.Parse(time.RFC3339Nano,val)
-		        if err != nil { atime = time.Unix(0,0) }
+		val, ok := metadata["atime"]
+		if !ok {
+			atime = time.Unix(0, 0)
+		} else {
+			atime, err = time.Parse(time.RFC3339Nano, val)
+			if err != nil {
+				atime = time.Unix(0, 0)
+			}
 		}
+		// set uname/gname
+		if uid == 0 {
+			uname = "root"
+		} else {
+			uname = strconv.FormatInt(uid, 10)
+		}
+		if gid == 0 {
+			gname = "root"
+		} else {
+			gname = strconv.FormatInt(gid, 10)
+		}
+	} else {
+		mode = 0644
+		uid = 0
+		gid = 0
+		uname = "root"
+		gname = "root"
+		atime = header.ModTime
+		ctime = header.ModTime
 	}
-	//
+	// set values
 	header.Mode = mode
 	header.Uid = int(uid)
 	header.Gid = int(gid)
+	header.Uname = uname
+	header.Gname = gname
 	header.AccessTime = atime
 	header.ChangeTime = ctime
 }
-
-*/
 
 // structs for fs.FileInfo,fs.File,SeekableFile
 
@@ -105,7 +127,7 @@ type fileImpl struct {
 	err      error
 }
 
-func newFileInfo(ctx context.Context, entry fs.DirEntry, prefix string) stdfs.FileInfo {
+func newFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, metadata fs.Metadata) stdfs.FileInfo {
 	var fi = new(fileInfoImpl)
 	//
 	fi.header = new(tar.Header)
@@ -115,18 +137,14 @@ func newFileInfo(ctx context.Context, entry fs.DirEntry, prefix string) stdfs.Fi
 		fi.header.Name = entry.Remote()
 	}
 	fi.header.Size = entry.Size()
-	fi.header.Mode = 0666
+	fi.header.ModTime = entry.ModTime(ctx)
+	// set metadata
+	metadataToHeader(metadata, fi.header)
+	// flag if directory
 	_, isDir := entry.(fs.Directory)
 	if isDir {
 		fi.header.Mode = int64(stdfs.ModeDir) | fi.header.Mode
 	}
-	fi.header.Uid = 0
-	fi.header.Gid = 0
-	fi.header.Uname = "root"
-	fi.header.Gname = "root"
-	fi.header.ModTime = entry.ModTime(ctx)
-	fi.header.AccessTime = entry.ModTime(ctx)
-	fi.header.ChangeTime = entry.ModTime(ctx)
 	//
 	return fi
 }
@@ -160,8 +178,8 @@ func (a *fileInfoImpl) String() string {
 }
 
 // NewArchiveFileInfo will take a fs.DirEntry and return a archives.Fileinfo
-func NewArchiveFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, progress ProgressCallback) archives.FileInfo {
-	fi := newFileInfo(ctx, entry, prefix)
+func NewArchiveFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, metadata fs.Metadata, progress ProgressCallback) archives.FileInfo {
+	fi := newFileInfo(ctx, entry, prefix, metadata)
 	//
 	return archives.FileInfo{
 		FileInfo:      fi,
@@ -170,7 +188,7 @@ func NewArchiveFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, p
 		Open: func() (stdfs.File, error) {
 			obj, isObject := entry.(fs.Object)
 			if isObject {
-				return NewFile(ctx, obj, fi, progress)
+				return newFile(ctx, obj, fi, progress)
 			}
 			return nil, fmt.Errorf("%s is not a file", fi.Name())
 		},
@@ -178,8 +196,8 @@ func NewArchiveFileInfo(ctx context.Context, entry fs.DirEntry, prefix string, p
 
 }
 
-// NewFile - create a fs.File compatible struct
-func NewFile(ctx context.Context, obj fs.Object, fi stdfs.FileInfo, progress ProgressCallback) (stdfs.File, error) {
+// create a fs.File compatible struct
+func newFile(ctx context.Context, obj fs.Object, fi stdfs.FileInfo, progress ProgressCallback) (stdfs.File, error) {
 	var f = new(fileImpl)
 	// create stdfs.File
 	f.entry = fi

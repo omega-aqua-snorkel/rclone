@@ -243,15 +243,23 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, fo
 	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
-			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
-				info := files.NewArchiveFileInfo(ctx, o, prefix, callback)
+			var metadata fs.Metadata
+			if ci.Metadata {
+				metadata = loadMetadata(ctx, o)
+			}
+			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), metadata) {
+				info := files.NewArchiveFileInfo(ctx, o, prefix, metadata, callback)
 				list = append(list, info)
 			}
 		})
 		// get files
 		entries.ForObject(func(o fs.Object) {
-			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), loadMetadata(ctx, o)) {
-				info := files.NewArchiveFileInfo(ctx, o, prefix, callback)
+			var metadata fs.Metadata
+			if ci.Metadata {
+				metadata = loadMetadata(ctx, o)
+			}
+			if fi.Include(o.Remote(), o.Size(), o.ModTime(ctx), metadata) {
+				info := files.NewArchiveFileInfo(ctx, o, prefix, metadata, callback)
 				list = append(list, info)
 				totalLength += o.Size()
 			}
