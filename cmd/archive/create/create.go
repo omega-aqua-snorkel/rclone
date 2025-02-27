@@ -26,42 +26,42 @@ import (
 var (
 	archiveFormats = map[string]archives.CompressedArchive{
 		"tar": archives.CompressedArchive{
-			Archival: archives.Tar{},
+			Archival: archives.Tar{ContinueOnError: true},
 		},
 		"tar.gz": archives.CompressedArchive{
 			Compression: archives.Gz{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.bz2": archives.CompressedArchive{
 			Compression: archives.Bz2{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.lz": archives.CompressedArchive{
 			Compression: archives.Lzip{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.lz4": archives.CompressedArchive{
 			Compression: archives.Lz4{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.xz": archives.CompressedArchive{
 			Compression: archives.Xz{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.zst": archives.CompressedArchive{
 			Compression: archives.Zstd{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.br": archives.CompressedArchive{
 			Compression: archives.Brotli{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"tar.sz": archives.CompressedArchive{
 			Compression: archives.Sz{},
-			Archival:    archives.Tar{},
+			Archival:    archives.Tar{ContinueOnError: true},
 		},
 		"zip": archives.CompressedArchive{
-			Archival: archives.Zip{},
+			Archival: archives.Zip{ContinueOnError: true},
 		},
 	}
 	archiveExtensions = map[string]string{
@@ -240,7 +240,7 @@ func ArchiveCreate(ctx context.Context, src fs.Fs, dst fs.Fs, dstFile string, fo
 		}
 	}
 	// get source files
-	err = walk.Walk(ctx, src, "", false, -1, func(path string, entries fs.DirEntries, err error) error {
+	err = walk.ListR(ctx, src, "", false, ci.MaxDepth, walk.ListAll, func(entries fs.DirEntries) error {
 		// get directories
 		entries.ForDir(func(o fs.Directory) {
 			var metadata fs.Metadata
