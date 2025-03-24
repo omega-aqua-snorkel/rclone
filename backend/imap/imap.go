@@ -91,7 +91,7 @@ func init() {
 
 // Utility functions
 
-func createHash(reader io.Reader, t ...hash.Type) (*hash.MultiHasher, error) {
+func createHash(reader io.ReadCloser, t ...hash.Type) (map[hash.Type]string, error) {
 	if len(t) == 0 {
 		t = []hash.Type{hash.MD5}
 	}
@@ -105,7 +105,35 @@ func createHash(reader io.Reader, t ...hash.Type) (*hash.MultiHasher, error) {
 	if _, err := io.Copy(hasher, reader); err != nil {
 		return nil, err
 	}
-	return hasher, nil
+	// close reader
+	err = reader.Close()
+	if err != nil {
+		return nil,err
+	}
+	// save hashes to map
+	hashes:=map[hash.Type]string{}
+	for _, curr := range t {
+	        // get the hash
+	        checksum, err := hasher.SumString(hash.MD5, false)
+	        if err == nil {
+			hashes[curr]=checksum
+	        }
+	}
+	//
+	return hashes, nil
+}
+
+func isMessage(reader io.ReadCloser) error {
+	_, err := mail.ReadMessage(reader)
+	if err != nil {
+		return errorInvalidMessage
+	}
+	// close reader
+	err = reader.Close()
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func reverse(input string) string {
@@ -159,13 +187,7 @@ func getMatches(root string, list []string) []string {
 	return result
 }
 
-func searchCriteriaFromName(root, dir, name string) (*imap.SearchCriteria, error) {
-	// extract info from file name
-	info, err := nameToMessageInfo(root, dir, name)
-	// leave if not valid file name
-	if err != nil {
-		return nil, err
-	}
+func searchCriteriaFromDescriptor(info *descriptor) *imap.SearchCriteria {
 	// init criteria for search
 	criteria := imap.NewSearchCriteria()
 	// include messages within date range (1 day before and after, imap uses date only no time)
@@ -175,31 +197,17 @@ func searchCriteriaFromName(root, dir, name string) (*imap.SearchCriteria, error
 	criteria.Larger = uint32(info.Size() - 50)
 	criteria.Smaller = uint32(info.Size() + 50)
 	//
-	return criteria, nil
+	return criteria
 }
 
-func messageToObject(f *Fs, root string, dir string, msg *imap.Message) (*Object, error) {
-	var reader io.Reader
-	// get body io.Reader (should be first value in msg.Body)
-	for _, curr := range msg.Body {
-		reader = curr
-		break
-	}
-	if reader == nil {
-		return nil, errorReadingMessage
-	}
-	//
-	info, err := readerToMessageInfo(root, dir, "", msg.InternalDate, io.NopCloser(reader), int64(msg.Size), msg.Flags)
+func searchCriteriaFromName(root, dir, name string) (*imap.SearchCriteria, error) {
+	// extract info from file name
+	info, err := nameToDescriptor(root, dir, name)
+	// leave if not valid file name
 	if err != nil {
 		return nil, err
 	}
-	// return object
-	return &Object{
-		fs:     f,
-		seqNum: msg.SeqNum,
-		info:   info,
-		hashes: map[hash.Type]string{hash.MD5: info.Checksum()},
-	}, nil
+	return searchCriteriaFromDescriptor(info), nil
 }
 
 func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
@@ -238,12 +246,11 @@ func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
 		fs.Debugf(nil, "List items in %s:%s matching %s", f.name, absoluteDir, file)
 		criteria, err = searchCriteriaFromName(absoluteDir, dir, file)
 		// file names must be in rclone maildir format
-		if err != nil {
-			// searching for filename not in maildir format, will never exist
-			if err == errorInvalidFileName {
-				return entries, nil
-			}
-			// different error
+		if err == errorInvalidFileName {
+			// searching for filename not in maildir format, will never be found
+			return entries, nil
+		} else if err != nil {
+			// unknown error
 			return nil, err
 		}
 	}
@@ -259,36 +266,40 @@ func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
 	if absoluteDir == "" {
 		return entries, nil
 	}
-	// get message count
+	// get message count in mailbox
 	mboxStatus, err := client.GetMailboxStatus(absoluteDir)
 	if err != nil {
+		// error getting mailbox information
 		return nil, err
 	} else if mboxStatus.Messages == 0 {
 		// mailbox is empty
 		return entries, nil
-	}
-	// leave if dir is empty, root has no messages
-	if criteria != nil {
+	} else if criteria != nil {
+		// searching for a message
 		ids, err := client.Search(absoluteDir, criteria)
+		// error searching
 		if err != nil {
 			return nil, err
 		}
+		// no matches
 		if len(ids) == 0 {
 			return entries, nil
 		}
+		// set matches
 		seqset.AddNum(ids...)
 		fs.Debugf(nil, "Fetch from %s with %d messages - IDS=%s", strings.Trim(absoluteDir, "/"), mboxStatus.Messages, strings.Join(strings.Fields(fmt.Sprint(ids)), ", "))
 	} else {
+		// get all messages in mailbox
 		seqset.AddRange(1, mboxStatus.Messages)
 		fs.Debugf(nil, "Fetch all from %s with %d messages", strings.Trim(absoluteDir, "/"), mboxStatus.Messages)
 	}
-	//
+	// get messages matching ids
 	err = client.Fetch(absoluteDir, seqset, items, func(msg *imap.Message) {
-		o, err := messageToObject(f, absoluteDir, dir, msg)
+		info, err := messageToDescriptor(absoluteDir, dir, "", msg)
 		if err != nil {
 			fs.Debugf(nil, "Error converting message to object: %s", err.Error())
-		} else if file == "" || o.Remote() == file {
-			entries = append(entries, o)
+		} else if file == "" || info.Matches(file) {
+			entries = append(entries, &Object{fs: f, seqNum: msg.SeqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}})
 		}
 	})
 	if err != nil {
@@ -298,10 +309,10 @@ func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
 }
 
 // ------------------------------------------------------------
-// FileNameInfo
+// Descriptor
 // ------------------------------------------------------------
 
-type messageInfo struct {
+type descriptor struct {
 	root   string
 	dir    string
 	name   string
@@ -311,7 +322,7 @@ type messageInfo struct {
 	flags  []string
 }
 
-func newMessageInfo(root string, dir string, name string, date time.Time, checksum string, size int64, flags []string) (*messageInfo, error) {
+func newDescriptor(root string, dir string, name string, date time.Time, checksum string, size int64, flags []string) (*descriptor, error) {
 	if name == "" {
 		name = fmt.Sprintf("%d.R%s.%s,S=%d-2,", date.UTC().Unix(), checksum, imapHost, size)
 		if slices.Contains(flags, imap.SeenFlag) {
@@ -330,7 +341,7 @@ func newMessageInfo(root string, dir string, name string, date time.Time, checks
 			name += "F"
 		}
 	}
-	return &messageInfo{
+	return &descriptor{
 		root:   root,
 		dir:    dir,
 		name:   name,
@@ -341,48 +352,98 @@ func newMessageInfo(root string, dir string, name string, date time.Time, checks
 	}, nil
 }
 
-func readerToMessageInfo(root string, dir string, name string, date time.Time, reader io.ReadCloser, size int64, flags []string) (*messageInfo, error) {
-	// calc md5 checksum
-	hasher, err := createHash(reader, hash.MD5)
+func readerToDescriptor(root string, dir string, name string, date time.Time, reader io.Reader, size int64, flags []string) (*descriptor, error) {
+	seeker, isSeeker := reader.(io.ReadSeeker)
+	if !isSeeker {
+		fs.Debugf(nil, "readerToMessage - not a seeker!!")
+		return nil, errorReadingMessage
+	}
+	// check if message
+	err := isMessage(io.NopCloser(seeker))
+	if err != nil {
+		return nil, errorInvalidMessage
+	}
+	// rewind to calculate checksum
+	_, err = seeker.Seek(0, io.SeekStart)
 	if err != nil {
 		return nil, errorReadingMessage
 	}
-	_ = reader.Close()
+	// calc md5 checksum
+	hashes, err := createHash(io.NopCloser(reader), hash.MD5)
+	if err != nil {
+		return nil, errorReadingMessage
+	}
 	// get the hash
-	checksum, err := hasher.SumString(hash.MD5, false)
+	checksum, found := hashes[hash.MD5]
+	if !found {
+		return nil, errorReadingMessage
+	}
+	// rewind
+	_, err = seeker.Seek(0, io.SeekStart)
 	if err != nil {
 		return nil, errorReadingMessage
 	}
 	//
-	return newMessageInfo(root, dir, name, date, checksum, size, flags)
+	return newDescriptor(root, dir, name, date, checksum, size, flags)
 }
 
-func objectToMessageInfo(ctx context.Context, root string, o fs.Object) (info *messageInfo, err error) {
-	// open object
+func messageToDescriptor(root string, dir string, name string, msg *imap.Message) (*descriptor, error) {
+	var reader io.Reader
+	// get body io.Reader (should be first value in msg.Body)
+	for _, curr := range msg.Body {
+		reader = curr
+		break
+	}
+	if reader == nil {
+		return nil, errorReadingMessage
+	}
+	// calc md5 checksum
+	hashes, err := createHash(io.NopCloser(reader), hash.MD5)
+	if err != nil {
+		return nil, errorReadingMessage
+	}
+	// get the hash
+	checksum, found := hashes[hash.MD5]
+	if !found {
+		return nil, errorReadingMessage
+	}
+	//
+	return newDescriptor(root, dir, name, msg.InternalDate, checksum, int64(msg.Size), msg.Flags)
+}
+
+func objectToDescriptor(ctx context.Context, root string, o fs.Object) (info *descriptor, err error) {
+	// try and check if name is valid maildir name
+	info, err = nameToDescriptor(root, path.Dir(o.Remote()), path.Base(o.Remote()))
+	if err == nil {
+		return info, nil
+	}
+	// not a valid name, check if a valid message
 	reader, err := o.Open(ctx)
 	if err != nil {
 		return nil, errorReadingMessage
 	}
-	// check if a valid message
-	_, err = mail.ReadMessage(reader)
-	_ = reader.Close()
+	// check if message
+	err = isMessage(reader)
 	if err != nil {
 		return nil, errorInvalidMessage
 	}
-	// get md5 hash
-	checksum, err := o.Hash(ctx, hash.MD5)
+	// valid message, get checksum
+	reader, err = o.Open(ctx)
 	if err != nil {
-		// get hash failed open again and calculate it
-		reader, err = o.Open(ctx)
-		if err != nil {
-			return nil, errorReadingMessage
-		}
-		return readerToMessageInfo(root, path.Dir(o.Remote()), path.Base(o.Remote()), o.ModTime(ctx).UTC(), reader, o.Size(), []string{})
+		return nil, errorReadingMessage
 	}
-	return newMessageInfo(root, path.Dir(o.Remote()), path.Base(o.Remote()), o.ModTime(ctx).UTC(), checksum, o.Size(), []string{})
+	hashes, err := createHash(reader, hash.MD5)
+	if err != nil {
+		return nil, errorReadingMessage
+	}
+	checksum, found := hashes[hash.MD5]
+	if !found {
+		return nil, errorReadingMessage
+	}
+	return newDescriptor(root, path.Dir(o.Remote()), path.Base(o.Remote()), o.ModTime(ctx).UTC(), checksum, o.Size(), []string{})
 }
 
-func nameToMessageInfo(root, dir, name string) (*messageInfo, error) {
+func nameToDescriptor(root, dir, name string) (*descriptor, error) {
 	matches := messageNameRegEx.FindStringSubmatch(path.Base(name))
 	if matches == nil {
 		return nil, errorInvalidFileName
@@ -418,14 +479,18 @@ func nameToMessageInfo(root, dir, name string) (*messageInfo, error) {
 		flags = append(flags, imap.FlaggedFlag)
 	}
 	//
-	return newMessageInfo(root, dir, "", date, checksum, size, flags)
+	return newDescriptor(root, dir, "", date, checksum, size, flags)
 }
 
-func (i *messageInfo) Name() string {
+func (i *descriptor) Equal(o *descriptor) bool {
+	return i.date == o.date && i.md5sum == o.md5sum && i.size == o.size
+}
+
+func (i *descriptor) Name() string {
 	return i.name
 }
 
-func (i *messageInfo) MaildirName(flags bool) string {
+func (i *descriptor) MaildirName(flags bool) string {
 	name := fmt.Sprintf("%d.R%s.%s,S=%d-2,", i.date.UTC().Unix(), i.md5sum, imapHost, i.size)
 	if !flags {
 		return name
@@ -451,23 +516,44 @@ func (i *messageInfo) MaildirName(flags bool) string {
 
 }
 
-func (i *messageInfo) ModTime() time.Time {
+func (i *descriptor) Matches(name string) bool {
+	matches := messageNameRegEx.FindStringSubmatch(path.Base(name))
+	if matches == nil {
+		return false
+	}
+	// get date
+	idate, err := strconv.ParseInt(matches[1], 10, 64)
+	if err != nil {
+		return false
+	}
+	date := time.Unix(idate, 0).UTC()
+	// get hash
+	checksum := matches[2]
+	// get size
+	size, err := strconv.ParseInt(matches[4], 10, 64)
+	if err != nil {
+		return false
+	}
+	return i.date == date && i.md5sum == checksum && i.size == size
+}
+
+func (i *descriptor) ModTime() time.Time {
 	return i.date
 }
 
-func (i *messageInfo) Checksum() string {
+func (i *descriptor) Checksum() string {
 	return i.md5sum
 }
 
-func (i *messageInfo) Host() string {
+func (i *descriptor) Host() string {
 	return imapHost
 }
 
-func (i *messageInfo) Size() int64 {
+func (i *descriptor) Size() int64 {
 	return i.size
 }
 
-func (i *messageInfo) IsFlagSet(value string) bool {
+func (i *descriptor) IsFlagSet(value string) bool {
 	return slices.Contains(i.flags, value)
 }
 
@@ -523,54 +609,71 @@ func (f *Fs) Precision() time.Duration {
 	return time.Second
 }
 
-func (f *Fs) findObject(ctx context.Context, remote string) (mailObject, error) {
-	var info *messageInfo
-	var searchName string
-	var err error
-	//
-	searchName = path.Base(remote)
-	srcObj, hasSource := ctx.Value(operations.SourceObjectKey).(fs.Object)
-	if hasSource {
-		// srcObj is valid, for message using date and checksum instead of name
-		info, err = objectToMessageInfo(ctx, f.root, srcObj)
-		if err == nil {
-			searchName = info.MaildirName(false)
-			fs.Debugf(nil, "SourceObjectKey found in context, Using %s for search", searchName)
-		} else if err == errorInvalidMessage || err == errorReadingMessage {
-			return nil, fserrors.NoRetryError(err)
-		} else {
-			fs.Debugf(nil, "SourceObjectKey found in context but unable to get information: %s", err.Error())
-		}
+func (f *Fs) findObject(ctx context.Context, info *descriptor) (*Object, error) {
+	var o *Object
+	// connect to imap server
+	client, err := newMailClient(f)
+	if err != nil {
+		return nil, fmt.Errorf("failed append: %w", err)
 	}
-	entries, err := fetchEntries(f, searchName)
+	// get search criteria
+	criteria := searchCriteriaFromDescriptor(info)
+	items := []imap.FetchItem{imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope, imap.FetchItem("BODY.PEEK[]")}
+	// connected, logout on exit
+	defer client.Logout()
+	// search messages
+	ids, err := client.Search(path.Join(info.root, info.dir), criteria)
+	if err != nil {
+		return nil, fs.ErrorObjectNotFound
+	} else if len(ids) == 0 {
+		return nil, fs.ErrorObjectNotFound
+	}
+	// messages found, check matching one
+	seqset := new(imap.SeqSet)
+	seqset.AddNum(ids...)
+	err = client.Fetch(path.Join(info.root, info.dir), seqset, items, func(msg *imap.Message) {
+		// leave if we found it
+		if o != nil {
+			return
+		}
+		//
+		currInfo, err := messageToDescriptor(info.root, info.dir, "", msg)
+		if err != nil {
+			return
+		} else if info.Equal(currInfo) {
+			o = &Object{fs: f, seqNum: msg.SeqNum, info: currInfo, hashes: map[hash.Type]string{hash.MD5: currInfo.Checksum()}}
+		}
+	})
+	//
 	if err != nil {
 		return nil, err
+	} else if o == nil {
+		return nil, fs.ErrorObjectNotFound
 	}
-	// find message that matches hash
-	for _, curr := range entries {
-		o, isObject := curr.(*Object)
-		if !isObject {
-			fs.Debugf(nil, "not an object - %s", curr.Remote())
-			continue
-		} else if !o.Matches(info) {
-			fs.Debugf(nil, "not a match - %s", curr.Remote())
-			continue
-		}
-		// found set name to srcObj.Remote()
-		// to fool copy functions so they think
-		// the message is named like source
-		if hasSource {
-			o.info.name = path.Base(srcObj.Remote())
-		}
-		return o, nil
-	}
-	return nil, fs.ErrorObjectNotFound
+	//
+	return o, nil
 }
 
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return f.findObject(ctx, remote)
+	var info *descriptor
+	var err error
+	//
+	srcObj, hasSource := ctx.Value(operations.SourceObjectKey).(fs.Object)
+	if hasSource {
+		// srcObj is valid, for message using date,checksum,size instead of name
+		info, err = objectToDescriptor(ctx, f.root, srcObj)
+	} else {
+		// try and get descriptor from name
+		info, err = nameToDescriptor(f.root, path.Dir(remote), path.Base(remote))
+
+	}
+	// leave if no descriptor
+	if err != nil {
+		return nil, fserrors.NoRetryError(err)
+	}
+	return f.findObject(ctx, info)
 }
 
 // Put the object
@@ -579,24 +682,29 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 //
 // The new object may have been created if an error is returned
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	var info *messageInfo
+	var info *descriptor
 	var err error
-	//
+	// check if srcObject available
 	srcObj, hasSource := ctx.Value(operations.SourceObjectKey).(fs.Object)
 	if hasSource {
-		// srcObj is valid, search using date and checksum instead of name
-		info, err = objectToMessageInfo(ctx, f.root, srcObj)
-		if err == errorInvalidMessage || err == errorReadingMessage {
-			return nil, fserrors.NoRetryError(err)
-		} else if err != nil {
-			fs.Debugf(nil, "Error converting object to messageInfo: %s", err.Error())
-		}
+		fs.Debugf(nil, "found SourceObjectKey in context, convert to descriptor")
+		info, err = objectToDescriptor(ctx, f.root, srcObj)
 	} else {
-		// srcObj not set parse info from name
-		info, err = nameToMessageInfo(f.root, "", src.Remote())
-		if err != nil {
-			return nil, fserrors.NoRetryError(err)
-		}
+		err = errorReadingMessage
+	}
+	// check if name is valid maildir name
+	if err != nil {
+		fs.Debugf(nil, "failed getting descriptor from context,use name")
+		info, err = nameToDescriptor(f.root, path.Dir(src.Remote()), path.Base(src.Remote()))
+	}
+	// check if we can create info from reader
+	if err != nil {
+		fs.Debugf(nil, "failed getting descriptor from context and name,use reader")
+		info, err = readerToDescriptor(f.root, path.Dir(src.Remote()), path.Base(src.Remote()), src.ModTime(ctx), in, src.Size(), []string{})
+	}
+	// leave if unable to create info
+	if err != nil {
+		return nil, fserrors.NoRetryError(err)
 	}
 	// connect to imap server
 	client, err := newMailClient(f)
@@ -610,8 +718,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	if err != nil {
 		return nil, fmt.Errorf("failed append: %w", err)
 	}
-	//
-	return f.findObject(ctx, info.MaildirName(false))
+	return f.findObject(ctx, info)
 }
 
 // PutStream uploads to the remote path with the modTime given of indeterminate size
@@ -692,7 +799,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	return client.RenameMailbox(srcPath, dstPath)
 }
 
-// Hashes are not supported
+// Hashes - valid MD5,SHA1
 func (f *Fs) Hashes() hash.Set {
 	hashSet := hash.NewHashSet()
 	hashSet.Add(hash.SHA1)
@@ -708,13 +815,13 @@ func (f *Fs) Hashes() hash.Set {
 type Object struct {
 	fs     *Fs
 	seqNum uint32
-	info   *messageInfo
+	info   *descriptor
 	hashes map[hash.Type]string
 }
 
-type mailObject interface {
-	fs.Object
-	Matches(info *messageInfo) bool
+// Equal compare objects
+func (o *Object) Equal(v *Object) bool {
+	return o.info.Equal(v.info)
 }
 
 // Fs returns the parent Fs
@@ -741,10 +848,10 @@ func (o *Object) Remote() string {
 // Hash returns the hash of an object returning a lowercase hex string
 func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	// find hash in map
-	value, ok := o.hashes[t]
-	// hash found
-	if ok {
-		return value, nil
+	checksum, found := o.hashes[t]
+	// hash found in cache
+	if found {
+		return checksum, nil
 	}
 	// get reader
 	reader, err := o.Open(ctx)
@@ -752,18 +859,18 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 		return "", fmt.Errorf("failed to calculate %v: %w", t, err)
 	}
 	// create hash
-	hasher, err := createHash(reader, t)
+	hashes, err := createHash(reader, t)
 	if err != nil {
 		return "", hash.ErrUnsupported
 	}
 	// get the hash
-	value, err = hasher.SumString(t, false)
-	if err != nil {
+	checksum, found = hashes[t]
+	if !found {
 		return "", hash.ErrUnsupported
 	}
-	o.hashes[t] = value
+	o.hashes[t] = checksum
 	// return hash
-	return value, err
+	return checksum, err
 }
 
 // Size returns the size of an object in bytes
@@ -831,13 +938,19 @@ func (o *Object) Remove(ctx context.Context) error {
 	return client.ExpungeMailbox(path.Join(o.info.root, o.info.dir))
 }
 
+// MimeType returns the mime type of the file
+// In this case all messages are message/rfc822
+func (o *Object) MimeType(ctx context.Context) string {
+	return "message/rfc822"
+}
+
 // Update an object
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
 	return fmt.Errorf("not supported")
 }
 
 // Matches compares object to a messageInfo
-func (o *Object) Matches(info *messageInfo) bool {
+func (o *Object) Matches(info *descriptor) bool {
 	return info.MaildirName(false) == o.info.MaildirName(false)
 }
 
@@ -1129,19 +1242,6 @@ func (m *mailclient) GetMailboxStatus(name string) (*imap.MailboxStatus, error) 
 	return m.conn.Status(m.dirToMailbox(name), []imap.StatusItem{imap.StatusMessages})
 }
 
-/*
-func (m *mailclient) GetMailbox() (string, error) {
-	if m.conn == nil {
-		return "", fmt.Errorf("failed to get current mailbox: not connected")
-	}
-	selectedMbox := m.conn.Mailbox()
-	if selectedMbox == nil {
-		return "", fmt.Errorf("failed to get current mailbox: none selected")
-	}
-	return m.mailboxToDir(selectedMbox.Name), nil
-}
-*/
-
 func (m *mailclient) ExpungeMailbox(mailbox string) error {
 	if m.conn == nil {
 		return fmt.Errorf("failed to expunge mailbox %s: not connected", mailbox)
@@ -1175,10 +1275,10 @@ func (m *mailclient) Save(mailbox string, date time.Time, size int64, reader io.
 
 func (m *mailclient) SetFlags(mailbox string, seqset *imap.SeqSet, flags ...string) error {
 	if m.conn == nil {
-		return fmt.Errorf("failed to delete messages: not connected")
+		return fmt.Errorf("failed to sert message flags: not connected")
 	}
 	// select mailbox, writable
-	_, err := m.conn.Select(m.dirToMailbox(mailbox), true)
+	_, err := m.conn.Select(m.dirToMailbox(mailbox), false)
 	if err != nil {
 		return fs.ErrorDirNotFound
 	}
@@ -1190,7 +1290,7 @@ func (m *mailclient) SetFlags(mailbox string, seqset *imap.SeqSet, flags ...stri
 	// Mark messages as deleted
 	item := imap.FormatFlagsOp(imap.AddFlags, true)
 	fs.Debugf(nil, "Set flags for messages with ID [%s]: %s", seqset, strings.Fields(strings.Trim(fmt.Sprint(flags), "[]")))
-	err = m.conn.Store(seqset, item, flags, nil)
+	err = m.conn.Store(seqset, item, flagInterfaces, nil)
 	if err != nil {
 		return fmt.Errorf("failed to set flags: %w", err)
 	}
@@ -1273,4 +1373,5 @@ var (
 	_ fs.DirMover    = &Fs{}
 	_ fs.PutStreamer = &Fs{}
 	_ fs.Object      = &Object{}
+	_ fs.MimeTyper   = &Object{}
 )
