@@ -336,7 +336,7 @@ func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
 			fs.Debugf(nil, "Error converting message to object: %s", err.Error())
 		} else if file == "" || info.Matches(file) {
 			obj := &Object{fs: f, seqNum: msg.SeqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}}
-			fs.Debugf(nil, "Adding object root=%s name=%s", f.root, obj.Remote())
+			//			fs.Debugf(nil, "Adding object root=%s name=%s", f.root, obj.Remote())
 			entries = append(entries, obj)
 		}
 	})
@@ -956,8 +956,8 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	// connected, logout on exit
 	defer client.Logout()
 	// fetch message
-	fs.Debugf(nil, "before open %s - name=%s", o.info.parent, o.Remote())
-	msg, err = client.FetchSingle(path.Join(o.info.parent, path.Dir(o.info.name)), o.seqNum, []imap.FetchItem{imap.FetchItem("BODY.PEEK[]")})
+	mailbox := path.Join(o.info.parent, path.Dir(o.info.name))
+	msg, err = client.FetchSingle(mailbox, o.seqNum, []imap.FetchItem{imap.FetchItem("BODY.PEEK[]")})
 	if err != nil {
 		return nil, err
 	}
@@ -982,12 +982,13 @@ func (o *Object) Remove(ctx context.Context) error {
 	seqSet := new(imap.SeqSet)
 	seqSet.AddNum(o.seqNum)
 	// set flags to deleted
-	err = client.SetFlags(path.Join(o.fs.root, o.info.parent), seqSet, imap.DeletedFlag)
+	mailbox := path.Join(o.info.parent, path.Dir(o.info.name))
+	err = client.SetFlags(mailbox, seqSet, imap.DeletedFlag)
 	if err != nil {
 		return err
 	}
 	// expunge mailbox
-	return client.ExpungeMailbox(path.Join(o.fs.root, o.info.parent))
+	return client.ExpungeMailbox(mailbox)
 }
 
 // MimeType returns the mime type of the file
