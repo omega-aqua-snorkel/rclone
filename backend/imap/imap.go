@@ -645,6 +645,10 @@ func (f *Fs) Precision() time.Duration {
 	return time.Second
 }
 
+func (f *Fs) newObject(seqNum uint32, info *descriptor) *Object {
+	return &Object{fs: f, seqNum: seqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}}
+}
+
 func (f *Fs) findObject(ctx context.Context, info *descriptor) (*Object, error) {
 	var o *Object
 	// connect to imap server
@@ -677,7 +681,7 @@ func (f *Fs) findObject(ctx context.Context, info *descriptor) (*Object, error) 
 		if err != nil {
 			return
 		} else if info.Equal(currInfo) {
-			o = &Object{fs: f, seqNum: msg.SeqNum, info: currInfo, hashes: map[hash.Type]string{hash.MD5: currInfo.Checksum()}}
+			o = f.newObject(msg.SeqNum, currInfo)
 		}
 	})
 	//
@@ -696,7 +700,6 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	var info *descriptor
 	var err error
 	//
-	fs.Debugf(nil, "NewObject remote=%s, root=%s", remote, f.root)
 	srcObj, hasSource := ctx.Value(operations.SourceObjectKey).(fs.Object)
 	if hasSource {
 		// srcObj is valid, for message using date,checksum,size instead of name
@@ -704,7 +707,6 @@ func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
 	} else {
 		// try and get descriptor from name
 		info, err = nameToDescriptor(f.root, remote)
-
 	}
 	// leave if no descriptor
 	if err != nil {
@@ -722,7 +724,6 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	var info *descriptor
 	var err error
 	// check if srcObject available
-	fs.Debugf(nil, "put %s,root=%s ", src.Remote(), f.root)
 	srcObj, hasSource := ctx.Value(operations.SourceObjectKey).(fs.Object)
 	if hasSource {
 		fs.Debugf(nil, "found SourceObjectKey in context, convert to descriptor")
@@ -740,7 +741,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		fs.Debugf(nil, "failed getting descriptor from context and name,use reader")
 		info, err = readerToDescriptor(f.root, src.Remote(), src.ModTime(ctx), in, src.Size(), []string{})
 	}
-	// leave if unable to create info
+	// leave if unable to create info or if it is a dry run
 	if err != nil {
 		return nil, fserrors.NoRetryError(err)
 	}
@@ -785,6 +786,11 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) (err error) {
 	// check if mailbox exists
 	root := path.Join(f.root, dir)
 	if client.HasMailbox(root) {
+		return nil
+	}
+	// do nothing if dry run
+	ci := fs.GetConfig(ctx)
+	if ci.DryRun {
 		return nil
 	}
 	// create the mailbox
