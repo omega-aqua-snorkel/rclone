@@ -3,7 +3,6 @@ package imap
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -26,7 +25,6 @@ import (
 	"github.com/rclone/rclone/lib/env"
 
 	"github.com/emersion/go-imap"
-	"github.com/emersion/go-imap/client"
 )
 
 var (
@@ -51,6 +49,23 @@ type Options struct {
 	AskPassword        bool   `config:"ask_password"`
 	Security           string `config:"security"`
 	InsecureSkipVerify bool   `config:"no_check_certificate"`
+}
+
+// mail client interface
+
+type mailclient interface {
+	Logout()
+	ListMailboxes(dir string) ([]string, error)
+	HasMailbox(dir string) bool
+	RenameMailbox(from string, to string) error
+	CreateMailbox(name string) error
+	DeleteMailbox(name string) error
+	ExpungeMailbox(mailbox string) error
+	SetFlags(mailbox string, ids []uint32, flags ...string) error
+	Save(mailbox string, date time.Time, size int64, reader io.Reader, flags []string) (err error)
+	Search(mailbox string, since, before time.Time, larger, smaller uint32) (seqNums []uint32, err error)
+	ForEach(mailbox string, action func(uint32, time.Time, uint32, []string, io.Reader)) error
+	ForEachID(mailbox string, ids []uint32, action func(uint32, time.Time, uint32, []string, io.Reader)) error
 }
 
 // Register with Fs
@@ -90,7 +105,9 @@ func init() {
 	fs.Register(fsi)
 }
 
+// ------------------------------------------------------------
 // Utility functions
+// ------------------------------------------------------------
 
 func createHash(reader io.ReadCloser, t ...hash.Type) (map[hash.Type]string, error) {
 	if len(t) == 0 {
@@ -124,41 +141,6 @@ func createHash(reader io.ReadCloser, t ...hash.Type) (map[hash.Type]string, err
 	return hashes, nil
 }
 
-func isMessage(reader io.ReadCloser) error {
-	_, err := mail.ReadMessage(reader)
-	if err != nil {
-		return errorInvalidMessage
-	}
-	// close reader
-	err = reader.Close()
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func reverse(input string) string {
-	// Get Unicode code points.
-	n := 0
-	rune := make([]rune, len(input))
-	for _, r := range input {
-		rune[n] = r
-		n++
-	}
-	rune = rune[0:n]
-	// Reverse
-	for i := 0; i < n/2; i++ {
-		rune[i], rune[n-1-i] = rune[n-1-i], rune[i]
-	}
-	// Convert back to UTF-8.
-	return string(rune)
-}
-
-func topDir(input string) (string, string) {
-	right, top := path.Split(reverse(input))
-	return strings.Trim(reverse(top), "/"), strings.Trim(reverse(right), "/")
-}
-
 func removeRoot(root, element string) string {
 	// remove leading/trailing slashes from element and root
 	root = strings.Trim(root, "/")
@@ -174,58 +156,6 @@ func removeRoot(root, element string) string {
 	return element
 }
 
-func getMatches(root string, list []string) []string {
-	var value string
-	// remove leading/trailing slashes from root
-	root = strings.Trim(root, "/")
-	// check list for matching prefix
-	result := []string{}
-	for _, element := range list {
-		// remove leading/trailing slashes from element
-		element = strings.Trim(element, "/")
-		// check if element matches
-		if root == "" {
-			// looking in root, return top dir
-			value, _ = topDir(element)
-		} else if strings.HasPrefix(element, root+"/") {
-			// check if element starts with root
-			value, _ = topDir(strings.TrimPrefix(element, root+"/"))
-		} else {
-			// no match skip
-			value = ""
-		}
-		// add if value not empty and not in result array
-		if value != "" && !slices.Contains(result, value) {
-			result = append(result, value)
-		}
-	}
-	//
-	return result
-}
-
-func searchCriteriaFromDescriptor(info *descriptor) *imap.SearchCriteria {
-	// init criteria for search
-	criteria := imap.NewSearchCriteria()
-	// include messages within date range (1 day before and after, imap uses date only no time)
-	criteria.Since = info.ModTime().AddDate(0, -1, 0)
-	criteria.Before = info.ModTime().AddDate(0, 1, 0)
-	// include messages with size between size-50 and size+50
-	criteria.Larger = uint32(info.Size() - 50)
-	criteria.Smaller = uint32(info.Size() + 50)
-	//
-	return criteria
-}
-
-func searchCriteriaFromName(parent, name string) (*imap.SearchCriteria, error) {
-	// extract info from file name
-	info, err := nameToDescriptor(parent, name)
-	// leave if not valid file name
-	if err != nil {
-		return nil, err
-	}
-	return searchCriteriaFromDescriptor(info), nil
-}
-
 func regexToMap(r *regexp.Regexp, str string) map[string]string {
 	results := map[string]string{}
 	matches := r.FindStringSubmatch(str)
@@ -237,113 +167,6 @@ func regexToMap(r *regexp.Regexp, str string) map[string]string {
 		}
 	}
 	return results
-}
-
-func fetchEntries(f *Fs, dir string) (entries fs.DirEntries, err error) {
-	var parent string
-	var file string
-	var mailboxes []string
-	var criteria *imap.SearchCriteria
-	// add root to dir
-	items := []imap.FetchItem{imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope, imap.FetchItem("BODY.PEEK[]")}
-	seqset := new(imap.SeqSet)
-	// connect to imap server
-	client, err := newMailClient(f)
-	if err != nil {
-		return nil, err
-	}
-	// connected, logout on exit
-	defer client.Logout()
-	// parse
-	groups := regexToMap(remoteRegex, path.Join(f.root, dir))
-	file = groups["file"]
-	if file == "" {
-		parent = groups["dir"]
-	} else {
-		parent = groups["parent"]
-	}
-	// check parent and file
-	if parent == "" {
-		// find message in root, impossible
-		if file != "" {
-			fs.Debugf(nil, "List %s: matching %s (there are no messages in root)", f.root, file)
-			return entries, nil
-		}
-		// list mailboxes in root
-		fs.Debugf(nil, "List root")
-	} else if !client.HasMailbox(parent) {
-		// mailbox does not exist, leave
-		fs.Debugf(nil, "List %s:%s, not found", f.name, parent)
-		return nil, fs.ErrorDirNotFound
-	} else if file == "" {
-		// list mailbox contents
-		fs.Debugf(nil, "List %s:%s", f.name, parent)
-	} else {
-		fs.Debugf(nil, "List %s:%s matching %s", f.name, parent, file)
-		// list a message in mailbox,file must be in rclone maildir format
-		criteria, err = searchCriteriaFromName(parent, file)
-		if err == errorInvalidFileName {
-			// searching for filename not in maildir format, will never be found
-			return entries, nil
-		} else if err != nil {
-			// unknown error
-			return nil, err
-		}
-	}
-	// get mailboxes
-	mailboxes, err = client.ListMailboxes(parent)
-	for _, name := range mailboxes {
-		if file == "" {
-			d := fs.NewDir(path.Join(dir, name), time.Unix(0, 0))
-			entries = append(entries, d)
-		}
-	}
-	// root has no messages
-	if parent == "" && file == "" {
-		return entries, nil
-	}
-	// get message count in mailbox
-	mboxStatus, err := client.GetMailboxStatus(parent)
-	if err != nil {
-		// error getting mailbox information
-		return nil, err
-	} else if mboxStatus.Messages == 0 {
-		// mailbox is empty
-		return entries, nil
-	} else if criteria != nil {
-		// searching for a message
-		ids, err := client.Search(parent, criteria)
-		// error searching
-		if err != nil {
-			return nil, err
-		}
-		// no matches
-		if len(ids) == 0 {
-			return entries, nil
-		}
-		// set matches
-		seqset.AddNum(ids...)
-		fs.Debugf(nil, "Fetch from %s with %d messages - IDS=%s", strings.Trim(parent, "/"), mboxStatus.Messages, strings.Join(strings.Fields(fmt.Sprint(ids)), ", "))
-	} else {
-		// get all messages in mailbox
-		seqset.AddRange(1, mboxStatus.Messages)
-		fs.Debugf(nil, "Fetch all from %s with %d messages", strings.Trim(parent, "/"), mboxStatus.Messages)
-	}
-	// get messages matching ids
-	err = client.Fetch(parent, seqset, items, func(msg *imap.Message) {
-		info, err := messageToDescriptor(parent, "", msg)
-		if err != nil {
-			fs.Debugf(nil, "Error converting message to object: %s", err.Error())
-		} else if file == "" || info.Matches(file) {
-			obj := &Object{fs: f, seqNum: msg.SeqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}}
-			//			fs.Debugf(nil, "Adding object root=%s name=%s", f.root, obj.Remote())
-			entries = append(entries, obj)
-		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch messages: %w", err)
-	}
-	return entries, nil
 }
 
 // ------------------------------------------------------------
@@ -359,7 +182,7 @@ type descriptor struct {
 	flags  []string
 }
 
-func newDescriptor(parent string, name string, date time.Time, checksum string, size int64, flags []string) (*descriptor, error) {
+func newDescriptor(parent string, name string, date time.Time, checksum string, size int64, flags []string) *descriptor {
 	if name == "" {
 		name = fmt.Sprintf("%d.R%s.%s,S=%d-2,", date.UTC().Unix(), checksum, imapHost, size)
 		if slices.Contains(flags, imap.SeenFlag) {
@@ -385,7 +208,7 @@ func newDescriptor(parent string, name string, date time.Time, checksum string, 
 		md5sum: checksum,
 		size:   size,
 		flags:  flags,
-	}, nil
+	}
 }
 
 func readerToDescriptor(parent string, name string, date time.Time, reader io.Reader, size int64, flags []string) (*descriptor, error) {
@@ -395,7 +218,7 @@ func readerToDescriptor(parent string, name string, date time.Time, reader io.Re
 		return nil, errorReadingMessage
 	}
 	// check if message
-	err := isMessage(io.NopCloser(seeker))
+	_, err := mail.ReadMessage(seeker)
 	if err != nil {
 		return nil, errorInvalidMessage
 	}
@@ -420,31 +243,7 @@ func readerToDescriptor(parent string, name string, date time.Time, reader io.Re
 		return nil, errorReadingMessage
 	}
 	//
-	return newDescriptor(parent, name, date, checksum, size, flags)
-}
-
-func messageToDescriptor(parent string, name string, msg *imap.Message) (*descriptor, error) {
-	var reader io.Reader
-	// get body io.Reader (should be first value in msg.Body)
-	for _, curr := range msg.Body {
-		reader = curr
-		break
-	}
-	if reader == nil {
-		return nil, errorReadingMessage
-	}
-	// calc md5 checksum
-	hashes, err := createHash(io.NopCloser(reader), hash.MD5)
-	if err != nil {
-		return nil, errorReadingMessage
-	}
-	// get the hash
-	checksum, found := hashes[hash.MD5]
-	if !found {
-		return nil, errorReadingMessage
-	}
-	//
-	return newDescriptor(parent, name, msg.InternalDate, checksum, int64(msg.Size), msg.Flags)
+	return newDescriptor(parent, name, date, checksum, size, flags), nil
 }
 
 func objectToDescriptor(ctx context.Context, parent string, o fs.Object) (info *descriptor, err error) {
@@ -459,7 +258,7 @@ func objectToDescriptor(ctx context.Context, parent string, o fs.Object) (info *
 		return nil, errorReadingMessage
 	}
 	// check if message
-	err = isMessage(reader)
+	_, err = mail.ReadMessage(reader)
 	if err != nil {
 		return nil, errorInvalidMessage
 	}
@@ -476,7 +275,7 @@ func objectToDescriptor(ctx context.Context, parent string, o fs.Object) (info *
 	if !found {
 		return nil, errorReadingMessage
 	}
-	return newDescriptor(parent, o.Remote(), o.ModTime(ctx).UTC(), checksum, o.Size(), []string{})
+	return newDescriptor(parent, o.Remote(), o.ModTime(ctx).UTC(), checksum, o.Size(), []string{}), nil
 }
 
 func nameToDescriptor(parent, name string) (*descriptor, error) {
@@ -515,7 +314,7 @@ func nameToDescriptor(parent, name string) (*descriptor, error) {
 		flags = append(flags, imap.FlaggedFlag)
 	}
 	//
-	return newDescriptor(parent, name, date, checksum, size, flags)
+	return newDescriptor(parent, name, date, checksum, size, flags), nil
 }
 
 func (i *descriptor) Equal(o *descriptor) bool {
@@ -635,9 +434,132 @@ func (f *Fs) Features() *fs.Features {
 	return f.features
 }
 
+func (f *Fs) createMailClient() (mailclient, error) {
+	return newMailClientV2(f)
+}
+
+func (f *Fs) createDescriptor(parent string, name string, date time.Time, size uint32, flags []string, reader io.Reader) (*descriptor, error) {
+	// calc md5 checksum
+	hashes, err := createHash(io.NopCloser(reader), hash.MD5)
+	if err != nil {
+		fs.Debugf(nil, "Error creating entry: %s", err.Error())
+		return nil, err
+	}
+	// get the hash
+	checksum, found := hashes[hash.MD5]
+	if !found {
+		fs.Debugf(nil, "Error creating entry: %s", err.Error())
+		return nil, err
+	}
+	return newDescriptor(parent, name, date, checksum, int64(size), flags), nil
+}
+
+func (f *Fs) createObject(seqNum uint32, info *descriptor) *Object {
+	return &Object{fs: f, seqNum: seqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}}
+}
+
 // List returns the entries in the directory
 func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err error) {
-	return fetchEntries(f, dir)
+	var parent string
+	var file string
+	var mailboxes []string
+	var info *descriptor
+	// connect to imap server
+	client, err := f.createMailClient()
+	if err != nil {
+		return nil, err
+	}
+	// connected, logout on exit
+	defer client.Logout()
+	// parse
+	groups := regexToMap(remoteRegex, path.Join(f.root, dir))
+	file = groups["file"]
+	if file == "" {
+		parent = groups["dir"]
+	} else {
+		parent = groups["parent"]
+	}
+	// check parent and file
+	if parent == "" {
+		// find message in root, impossible
+		if file != "" {
+			fs.Debugf(nil, "List %s: matching %s (there are no messages in root)", f.root, file)
+			return entries, nil
+		}
+		// list mailboxes in root
+		fs.Debugf(nil, "List root")
+	} else if !client.HasMailbox(parent) {
+		// mailbox does not exist, leave
+		fs.Debugf(nil, "List %s:%s, not found", f.name, parent)
+		return nil, fs.ErrorDirNotFound
+	} else if file == "" {
+		// list mailbox contents
+		fs.Debugf(nil, "List %s:%s", f.name, parent)
+	} else {
+		fs.Debugf(nil, "List %s:%s matching %s", f.name, parent, file)
+		// list a message in mailbox,file must be in rclone maildir format
+		// extract info from file name
+		info, err = nameToDescriptor(parent, file)
+		if err == errorInvalidFileName {
+			// searching for filename not in maildir format, will never be found
+			return entries, nil
+		} else if err != nil {
+			// unknown error
+			return nil, err
+		}
+	}
+	// get mailboxes
+	mailboxes, err = client.ListMailboxes(parent)
+	for _, name := range mailboxes {
+		if file == "" {
+			d := fs.NewDir(path.Join(dir, name), time.Unix(0, 0))
+			entries = append(entries, d)
+		}
+	}
+	// get messages
+	if parent == "" && file == "" {
+		// root has no messages
+		return entries, nil
+	} else if info != nil {
+		// searching for a matching message
+		ids, err := client.Search(parent, info.ModTime().AddDate(0, -1, 0), info.ModTime().AddDate(0, 1, 0), uint32(info.Size()-50), uint32(info.Size()+50))
+		// error searching
+		if err != nil {
+			return nil, err
+		}
+		// no matches
+		if len(ids) == 0 {
+			return entries, nil
+		}
+		// ok fetch messages with ids
+		fs.Debugf(nil, "Fetch from %s - IDS=%s", strings.Trim(parent, "/"), strings.Join(strings.Fields(fmt.Sprint(ids)), ", "))
+		err = client.ForEachID(parent, ids, func(seqNum uint32, date time.Time, size uint32, flags []string, reader io.Reader) {
+			currInfo, err := f.createDescriptor(parent, file, date, size, flags, reader)
+			if err != nil {
+				fs.Debugf(nil, "Error creating descriptor for ID(%d), %s", seqNum, err.Error())
+			} else if currInfo.Equal(info) {
+				entries = append(entries, f.createObject(seqNum, currInfo))
+			}
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch message: %w", err)
+		}
+	} else {
+		// fetch all messages in mailbox
+		fs.Debugf(nil, "Fetch all from %s", strings.Trim(parent, "/"))
+		err = client.ForEach(parent, func(seqNum uint32, date time.Time, size uint32, flags []string, reader io.Reader) {
+			currInfo, err := f.createDescriptor(parent, file, date, size, flags, reader)
+			if err != nil {
+				fs.Debugf(nil, "Error creating descriptor for ID(%d), %s", seqNum, err.Error())
+			}
+			entries = append(entries, f.createObject(seqNum, currInfo))
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch message list: %w", err)
+		}
+	}
+	// return entries
+	return entries, nil
 }
 
 // Precision of the object storage system
@@ -645,43 +567,34 @@ func (f *Fs) Precision() time.Duration {
 	return time.Second
 }
 
-func (f *Fs) newObject(seqNum uint32, info *descriptor) *Object {
-	return &Object{fs: f, seqNum: seqNum, info: info, hashes: map[hash.Type]string{hash.MD5: info.Checksum()}}
-}
-
 func (f *Fs) findObject(ctx context.Context, info *descriptor) (*Object, error) {
 	var o *Object
 	// connect to imap server
-	client, err := newMailClient(f)
+	client, err := f.createMailClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed append: %w", err)
 	}
-	// get search criteria
-	criteria := searchCriteriaFromDescriptor(info)
-	items := []imap.FetchItem{imap.FetchFlags, imap.FetchInternalDate, imap.FetchRFC822Size, imap.FetchEnvelope, imap.FetchItem("BODY.PEEK[]")}
 	// connected, logout on exit
 	defer client.Logout()
 	// search messages
-	ids, err := client.Search(info.parent, criteria)
+	ids, err := client.Search(info.parent, info.ModTime().AddDate(0, -1, 0), info.ModTime().AddDate(0, 1, 0), uint32(info.Size()-50), uint32(info.Size()+50))
 	if err != nil {
 		return nil, fs.ErrorObjectNotFound
 	} else if len(ids) == 0 {
 		return nil, fs.ErrorObjectNotFound
 	}
 	// messages found, check matching one
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(ids...)
-	err = client.Fetch(info.parent, seqset, items, func(msg *imap.Message) {
+	err = client.ForEachID(info.parent, ids, func(seqNum uint32, date time.Time, size uint32, flags []string, reader io.Reader) {
 		// leave if we found it
 		if o != nil {
 			return
 		}
 		//
-		currInfo, err := messageToDescriptor(info.parent, "", msg)
+		currInfo, err := f.createDescriptor(info.parent, "", date, size, flags, reader)
 		if err != nil {
 			return
 		} else if info.Equal(currInfo) {
-			o = f.newObject(msg.SeqNum, currInfo)
+			o = f.createObject(seqNum, currInfo)
 		}
 	})
 	//
@@ -746,7 +659,7 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		return nil, fserrors.NoRetryError(err)
 	}
 	// connect to imap server
-	client, err := newMailClient(f)
+	client, err := f.createMailClient()
 	if err != nil {
 		return nil, fmt.Errorf("failed append: %w", err)
 	}
@@ -777,7 +690,7 @@ func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, opt
 // Mkdir creates the directory if it doesn't exist
 func (f *Fs) Mkdir(ctx context.Context, dir string) (err error) {
 	// connect to imap server
-	client, err := newMailClient(f)
+	client, err := f.createMailClient()
 	if err != nil {
 		return err
 	}
@@ -802,7 +715,7 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) (err error) {
 // Returns an error if it isn't empty
 func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 	// connect to imap server
-	client, err := newMailClient(f)
+	client, err := f.createMailClient()
 	if err != nil {
 		return err
 	}
@@ -838,7 +751,7 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	srcPath := path.Join(srcFs.root, srcRemote)
 	dstPath := path.Join(f.root, dstRemote)
 	// connect to imap server
-	client, err := newMailClient(f)
+	client, err := f.createMailClient()
 	if err != nil {
 		return err
 	}
@@ -951,11 +864,11 @@ func (o *Object) Storable() bool {
 
 // Open an object for read
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.ReadCloser, err error) {
-	var msg *imap.Message
+	var result io.Reader
 	//
 	fs.Debugf(nil, "Open remote=%s, root=%s", o.Remote(), o.fs.root)
 	// connect to imap server
-	client, err := newMailClient(o.fs)
+	client, err := o.fs.createMailClient()
 	if err != nil {
 		return nil, err
 	}
@@ -963,33 +876,35 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	defer client.Logout()
 	// fetch message
 	mailbox := path.Join(o.info.parent, path.Dir(o.info.name))
-	msg, err = client.FetchSingle(mailbox, o.seqNum, []imap.FetchItem{imap.FetchItem("BODY.PEEK[]")})
+	// get message
+	err = client.ForEachID(mailbox, []uint32{o.seqNum}, func(_ uint32, _ time.Time, _ uint32, _ []string, reader io.Reader) {
+		// leave if we found it
+		if result != nil {
+			return
+		}
+		result = reader
+	})
 	if err != nil {
 		return nil, err
+	} else if result == nil {
+		return nil, fmt.Errorf("failed to open %s, invalid reader", o.Remote())
 	}
-	// there should be just one body
-	for _, literal := range msg.Body {
-		return io.NopCloser(literal), nil
-
-	}
-	return nil, fmt.Errorf("failed to get io.Reader: body not found")
+	// this should be seekable
+	return io.NopCloser(result), nil
 }
 
 // Remove an object
 func (o *Object) Remove(ctx context.Context) error {
 	// connect to imap server
-	client, err := newMailClient(o.fs)
+	client, err := o.fs.createMailClient()
 	if err != nil {
 		return err
 	}
 	// connected, logout on exit
 	defer client.Logout()
-	// delete the message
-	seqSet := new(imap.SeqSet)
-	seqSet.AddNum(o.seqNum)
 	// set flags to deleted
 	mailbox := path.Join(o.info.parent, path.Dir(o.info.name))
-	err = client.SetFlags(mailbox, seqSet, imap.DeletedFlag)
+	err = client.SetFlags(mailbox, []uint32{o.seqNum}, imap.DeletedFlag)
 	if err != nil {
 		return err
 	}
@@ -1005,12 +920,12 @@ func (o *Object) MimeType(ctx context.Context) string {
 
 // Update an object
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (err error) {
-	return fmt.Errorf("not supported")
+	return fmt.Errorf("Update not supported")
 }
 
 // Matches compares object to a messageInfo
-func (o *Object) Matches(info *descriptor) bool {
-	return info.MaildirName(false) == o.info.MaildirName(false)
+func (o *Object) Matches(name string) bool {
+	return o.info.Matches(name)
 }
 
 // NewFs constructs an Fs from the path.
@@ -1086,344 +1001,6 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	f.features = (&fs.Features{}).Fill(ctx, f)
 	//
 	return f, nil
-}
-
-// ------------------------------------------------------------
-// mailclient functions
-// ------------------------------------------------------------
-
-type mailclient struct {
-	conn      *client.Client
-	f         *Fs
-	delimiter string
-	mailboxes []string
-}
-
-type mailreader struct {
-	reader io.Reader
-	size   int64
-}
-
-func newMailClient(f *Fs) (*mailclient, error) {
-	cli := &mailclient{
-		conn:      nil,
-		f:         f,
-		mailboxes: []string{},
-	}
-	// try and login
-	err := cli.login()
-	if err != nil {
-		return nil, err
-	}
-	return cli, nil
-}
-
-func newMailReader(reader io.Reader, size int64) *mailreader {
-	return &mailreader{
-		reader: reader,
-		size:   size,
-	}
-}
-
-func (r *mailreader) Read(b []byte) (n int, err error) {
-	return r.reader.Read(b)
-}
-
-func (r *mailreader) Len() int {
-	return int(r.size)
-}
-
-func (m *mailclient) dirToMailbox(dir string) string {
-	return strings.ReplaceAll(strings.Trim(dir, "/"), "/", m.delimiter)
-}
-
-func (m *mailclient) mailboxToDir(mailbox string) string {
-	return strings.ReplaceAll(mailbox, m.delimiter, "/")
-}
-
-func (m *mailclient) login() error {
-	var err error
-	//
-	address := fmt.Sprintf("%s:%d", m.f.host, m.f.port)
-	// create options and options.TLSConfig()
-	tlsConfig := new(tls.Config)
-	// do we check for valid certificate
-	tlsConfig.ServerName = m.f.host
-	if m.f.skipVerify {
-		tlsConfig.InsecureSkipVerify = true
-	}
-	// create client
-	fs.Debugf(nil, "Connecting to %s", address)
-	if m.f.security == securityStartTLS {
-		m.conn, err = client.Dial(address)
-		if err != nil {
-			return fmt.Errorf("failed to dial IMAP server: %w", err)
-		}
-		// create STARTTLS client
-		err = m.conn.StartTLS(tlsConfig)
-		if err != nil {
-			defer m.Logout()
-			return err
-		}
-	} else if m.f.security == securityTLS {
-		m.conn, err = client.DialTLS(address, nil)
-		if err != nil {
-			return fmt.Errorf("failed to dial IMAP server: %w", err)
-		}
-	} else if m.f.security == securityNone {
-		m.conn, err = client.Dial(address)
-		if err != nil {
-			return fmt.Errorf("failed to dial IMAP server: %w", err)
-		}
-	}
-	// connected ok, now login
-	err = m.conn.Login(m.f.user, m.f.pass)
-	if err != nil {
-		defer m.Logout()
-		return fmt.Errorf("failed to login: %w", err)
-	}
-	// get list of mailboxes
-	err = m.RefreshMailboxes()
-	if err != nil {
-		defer m.Logout()
-		return err
-	}
-	//
-	return nil
-}
-
-func (m *mailclient) Logout() {
-	if m.conn != nil {
-		_ = m.conn.Logout()
-	}
-	//
-	m.conn = nil
-}
-
-func (m *mailclient) RefreshMailboxes() error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to get mailboxes : not connected")
-	}
-	// get mailboxes
-	mailboxes := make(chan *imap.MailboxInfo, 10)
-	done := make(chan error, 1)
-	go func() {
-		done <- m.conn.List("", "*", mailboxes)
-	}()
-	m.mailboxes = []string{}
-	for mbox := range mailboxes {
-		m.delimiter = mbox.Delimiter
-		m.mailboxes = append(m.mailboxes, mbox.Name)
-	}
-	if err := <-done; err != nil {
-		defer m.Logout()
-		return fmt.Errorf("failed to get mailboxes: %v", err)
-	}
-	return nil
-}
-
-func (m *mailclient) ListMailboxes(dir string) ([]string, error) {
-	if m.conn == nil {
-		return nil, fmt.Errorf("failed to list mailboxes : not connected")
-	}
-	list := []string{}
-	for _, curr := range m.mailboxes {
-		list = append(list, m.mailboxToDir(curr))
-	}
-	return getMatches(dir, list), nil
-}
-
-func (m *mailclient) HasMailbox(dir string) bool {
-	if m.conn == nil {
-		return false
-	}
-	for _, curr := range m.mailboxes {
-		if m.dirToMailbox(dir) == curr {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *mailclient) RenameMailbox(from string, to string) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to rename mailbox %s: not connected", from)
-	}
-	fs.Debugf(nil, "Rename mailbox %s to %s", from, to)
-	err := m.conn.Rename(m.dirToMailbox(from), m.dirToMailbox(to))
-	if err != nil {
-		return fmt.Errorf("failed to rename mailbox %s: %w", from, err)
-	}
-	return m.RefreshMailboxes()
-}
-
-func (m *mailclient) CreateMailbox(name string) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to create mailbox %s: not connected", name)
-	}
-	fs.Debugf(nil, "Create mailbox %s", name)
-	err := m.conn.Create(m.dirToMailbox(name))
-	if err != nil {
-		return fmt.Errorf("failed to create mailbox %s: %w", name, err)
-	}
-	return m.RefreshMailboxes()
-}
-
-func (m *mailclient) DeleteMailbox(name string) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to delete mailbox %s: not connected", name)
-	} else if name == "" {
-		return fmt.Errorf("cant remove root")
-	}
-	// select mailbox, readonly
-	selectedMbox, err := m.conn.Select(m.dirToMailbox(name), true)
-	if err != nil {
-		return fs.ErrorDirNotFound
-	}
-	if selectedMbox.Messages != 0 {
-		return fmt.Errorf("mailbox not empty, has %d messages", selectedMbox.Messages)
-	}
-	//
-	fs.Debugf(nil, "Delete mailbox %s", name)
-	err = m.conn.Delete(m.dirToMailbox(name))
-	if err != nil {
-		return fmt.Errorf("failed to delete mailbox %s: %w", name, err)
-	}
-	return m.RefreshMailboxes()
-}
-
-func (m *mailclient) GetMailboxStatus(name string) (*imap.MailboxStatus, error) {
-	if m.conn == nil {
-		return nil, fmt.Errorf("failed to get message count for mailbox %s: not connected", name)
-	} else if name == "" {
-		return nil, nil
-	}
-	return m.conn.Status(m.dirToMailbox(name), []imap.StatusItem{imap.StatusMessages})
-}
-
-func (m *mailclient) ExpungeMailbox(mailbox string) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to expunge mailbox %s: not connected", mailbox)
-	}
-	// select mailbox, writable
-	_, err := m.conn.Select(m.dirToMailbox(mailbox), false)
-	if err != nil {
-		return fs.ErrorDirNotFound
-	}
-	// expunge
-	fs.Debugf(nil, "Expunge mailbox: %s", mailbox)
-	err = m.conn.Expunge(nil)
-	if err != nil {
-		return fmt.Errorf("failed to expunge mailbox: %w", err)
-	}
-	//
-	return nil
-}
-
-func (m *mailclient) Save(mailbox string, date time.Time, size int64, reader io.Reader, flags []string) (err error) {
-	if m.conn == nil {
-		return fmt.Errorf("failed to save message to mailbox %s: not connected", mailbox)
-	}
-	fs.Debugf(nil, "Append message to mailbox %s", mailbox)
-	err = m.conn.Append(m.dirToMailbox(mailbox), flags, date, newMailReader(reader, size))
-	if err != nil {
-		return fmt.Errorf("failed to save message to mailbox %s: %w", mailbox, err)
-	}
-	return nil
-}
-
-func (m *mailclient) SetFlags(mailbox string, seqset *imap.SeqSet, flags ...string) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to sert message flags: not connected")
-	}
-	// select mailbox, writable
-	_, err := m.conn.Select(m.dirToMailbox(mailbox), false)
-	if err != nil {
-		return fs.ErrorDirNotFound
-	}
-	// convert flags to interfaces
-	flagInterfaces := make([]interface{}, len(flags))
-	for i, v := range flags {
-		flagInterfaces[i] = v
-	}
-	// Mark messages as deleted
-	item := imap.FormatFlagsOp(imap.AddFlags, true)
-	fs.Debugf(nil, "Set flags for messages with ID [%s]: %s", seqset, strings.Fields(strings.Trim(fmt.Sprint(flags), "[]")))
-	err = m.conn.Store(seqset, item, flagInterfaces, nil)
-	if err != nil {
-		return fmt.Errorf("failed to set flags: %w", err)
-	}
-	//
-	return nil
-}
-
-func (m *mailclient) Fetch(mailbox string, seqset *imap.SeqSet, items []imap.FetchItem, action func(*imap.Message)) error {
-	if m.conn == nil {
-		return fmt.Errorf("failed to fetch messages : not connected")
-	}
-	// select mailbox, readonly
-	selectedMbox, err := m.conn.Select(m.dirToMailbox(mailbox), true)
-	if err != nil {
-		return fs.ErrorDirNotFound
-	}
-	if selectedMbox.Messages == 0 {
-		return nil
-	}
-	//
-	messages := make(chan *imap.Message, 10)
-	done := make(chan error, 1)
-	// fetch messages on background
-	go func() {
-		done <- m.conn.Fetch(seqset, items, messages)
-	}()
-	// process messages
-	for msg := range messages {
-		if action != nil {
-			action(msg)
-		}
-	}
-	// check for error
-	if err := <-done; err != nil {
-		return fmt.Errorf("failed to fetch messages : %w", err)
-	}
-	return nil
-}
-
-func (m *mailclient) FetchSingle(mailbox string, id uint32, items []imap.FetchItem) (*imap.Message, error) {
-	list := make([]*imap.Message, 0)
-	seqset := new(imap.SeqSet)
-	seqset.AddNum(id)
-	// fetch messages
-	err := m.Fetch(mailbox, seqset, items, func(msg *imap.Message) {
-		list = append(list, msg)
-	})
-
-	if err != nil {
-		return nil, err
-	} else if len(list) == 0 {
-		return nil, fmt.Errorf("failed to fetch message : not found")
-	}
-	return list[0], nil
-}
-
-func (m *mailclient) Search(mailbox string, criteria *imap.SearchCriteria) (seqNums []uint32, err error) {
-	if m.conn == nil {
-		return nil, fmt.Errorf("failed to search messages : not connected")
-	}
-	// select mailbox, readonly
-	selectedMbox, err := m.conn.Select(m.dirToMailbox(mailbox), true)
-	if err != nil {
-		return nil, fs.ErrorDirNotFound
-	}
-	if selectedMbox.Messages == 0 {
-		return []uint32{}, nil
-	}
-	//
-	ids, err := m.conn.Search(criteria)
-	if err != nil {
-		return nil, fmt.Errorf("failed to search messages : %w", err)
-	}
-	return ids, err
 }
 
 // Check the interfaces are satisfied
