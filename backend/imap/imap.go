@@ -655,8 +655,11 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 		info, err = readerToDescriptor(f.root, src.Remote(), src.ModTime(ctx), in, src.Size(), []string{})
 	}
 	// leave if unable to create info or if it is a dry run
+	ci := fs.GetConfig(ctx)
 	if err != nil {
 		return nil, fserrors.NoRetryError(err)
+	} else if ci.DryRun {
+		return f.createObject(1, info), nil
 	}
 	// connect to imap server
 	client, err := f.createMailClient()
@@ -726,6 +729,11 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 	if !client.HasMailbox(root) {
 		return nil
 	}
+	// do nothing if dry run
+	ci := fs.GetConfig(ctx)
+	if ci.DryRun {
+		return nil
+	}
 	// create the mailbox
 	err = client.DeleteMailbox(root)
 	if err != nil {
@@ -743,6 +751,7 @@ func (f *Fs) Rmdir(ctx context.Context, dir string) (err error) {
 //
 // If destination exists then return fs.ErrorDirExists
 func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string) error {
+	//
 	srcFs, ok := src.(*Fs)
 	if !ok {
 		fs.Debugf(srcFs, "Can't move directory - not same remote type")
@@ -760,6 +769,11 @@ func (f *Fs) DirMove(ctx context.Context, src fs.Fs, srcRemote, dstRemote string
 	// check if mailbox exists
 	if client.HasMailbox(dstPath) {
 		return fs.ErrorDirExists
+	}
+	// leave if dry dryrun
+	ci := fs.GetConfig(ctx)
+	if ci.DryRun {
+		return nil
 	}
 	// do rename
 	return client.RenameMailbox(srcPath, dstPath)
@@ -895,6 +909,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 
 // Remove an object
 func (o *Object) Remove(ctx context.Context) error {
+	// leave if dry run
+	ci := fs.GetConfig(ctx)
+	if ci.DryRun {
+		return nil
+	}
 	// connect to imap server
 	client, err := o.fs.createMailClient()
 	if err != nil {
