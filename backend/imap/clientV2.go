@@ -365,7 +365,6 @@ func (m *mailclient2) Save(mailbox string, date time.Time, size int64, reader io
 	if m.conn == nil {
 		return fmt.Errorf("failed to save message to mailbox %s: not connected", mailbox)
 	}
-	fs.Debugf(nil, "Append message to mailbox %s", mailbox)
 	// find namespace for dir
 	ns := m.getDirNamespace(mailbox)
 	if ns == nil {
