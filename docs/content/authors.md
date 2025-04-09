@@ -948,3 +948,14 @@ put them back in again.` >}}
   * Dave Vasilevsky <djvasi@gmail.com> <dave@vasilevsky.ca>
   * luzpaz <luzpaz@users.noreply.github.com>
   * jack <9480542+jackusm@users.noreply.github.com>
+  * Jörn Friedrich Dreyer <jfd@butonic.de>
+  * alingse <alingse@foxmail.com>
+  * Fernando Fernández <ferferga@hotmail.com>
+  * eccoisle <167755281+eccoisle@users.noreply.github.com>
+  * Klaas Freitag <kraft@freisturz.de>
+  * Danny Garside <dannygarside@outlook.com>
+  * Samantha Bowen <sam@bbowen.net>
+  * simonmcnair <101189766+simonmcnair@users.noreply.github.com>
+  * huanghaojun <jasen.huang@ugreen.com>
+  * Enduriel <endur1el@protonmail.com>
+  * Markus Gerstel <markus.gerstel@osirium.com>
