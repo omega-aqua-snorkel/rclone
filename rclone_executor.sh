@@ -6,11 +6,11 @@ if [ -z "$RCLONE_COMMANDS" ]; then
     exit 1
 fi
 
-# If RCLONE_CONFIG is set, store it in the rclone config file
-if [ ! -z "$RCLONE_CONFIG" ]; then
+# If RCLONE_CONFIG_DATA is set, store it in the rclone config file
+if [ ! -z "$RCLONE_CONFIG_DATA" ]; then
     echo "Storing rclone config..."
     mkdir -p ~/.config/rclone/
-    echo "$RCLONE_CONFIG" > ~/.config/rclone/rclone.conf
+    echo "$RCLONE_CONFIG_DATA" > ~/.config/rclone/rclone.conf
     if [ $? -eq 0 ]; then
         echo "rclone config stored successfully."
     else
