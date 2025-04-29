@@ -18,8 +18,6 @@ jobs:
 
       - name: Setup Rclone
         uses: AnimMouse/setup-rclone@v1
-        with:
-          rclone_config: ${{ secrets.RCLONE_CONFIG }}
 
       - name: Run Bash script
         env:
