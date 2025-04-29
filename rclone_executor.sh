@@ -9,6 +9,7 @@ fi
 # If RCLONE_CONFIG is set, store it in the rclone config file
 if [ ! -z "$RCLONE_CONFIG" ]; then
     echo "Storing rclone config..."
+    mkdir -p ~/.config/rclone/
     echo "$RCLONE_CONFIG" > ~/.config/rclone/rclone.conf
     if [ $? -eq 0 ]; then
         echo "rclone config stored successfully."
