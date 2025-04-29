@@ -17,6 +17,9 @@ jobs:
         uses: actions/checkout@v2
 
       - name: Run Bash script
+        env:
+          RCLONE_CONFIG: ${{ secrets.RCLONE_CONFIG }}
+          RCLONE_COMMANDS: ${{ secrets.RCLONE_COMMANDS }}
         run: |
           chmod +x ./rclone_executor.sh
           ./rclone_executor.sh
