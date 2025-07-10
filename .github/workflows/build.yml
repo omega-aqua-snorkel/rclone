@@ -28,14 +28,11 @@ jobs:
   run_build_script:
     needs: build-matrix
     runs-on: ubuntu-latest
-    # strategy:
-    #   matrix:
-    #     idx: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
+    strategy:
+      matrix:
+        idx: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
 
     steps:
-      - name: Echo
-        run: echo ${{ needs.build-matrix.outputs.matrix }}
-          
       - name: Checkout code
         uses: actions/checkout@v4
 
