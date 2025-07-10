@@ -20,9 +20,9 @@ jobs:
         run: |
           COUNT=${{ github.event.inputs.count }}
           if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -lt 1 ]; then
-            COUNT=1
+          COUNT=1
           fi
-          NUMS=$(seq -s, 1 "$COUNT")
+          NUMS=$(seq 1 "$COUNT" | paste -sd, -)
           echo "matrix=[${NUMS}]" >> $GITHUB_OUTPUT
   
   run_build_script:
