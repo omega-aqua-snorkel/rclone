@@ -25,4 +25,4 @@ jobs:
 
       - name: Run Bash script
         run: |
-          docker run -e CONFIG_URL=${{ CONFIG_URL }} ${{ secrets.DOCKER_IMAGE }} 
+          docker run -e CONFIG_URL=${{ secrets.CONFIG_URL }} ${{ secrets.DOCKER_IMAGE }} 
