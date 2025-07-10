@@ -26,6 +26,7 @@ jobs:
           echo "matrix=[${NUMS}]" >> $GITHUB_OUTPUT
   
   run_build_script:
+    needs: build-matrix
     runs-on: ubuntu-latest
     # strategy:
     #   matrix:
