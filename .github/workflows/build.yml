@@ -19,8 +19,11 @@ jobs:
       - id: make-matrix
         run: |
           COUNT=${{ github.event.inputs.count }}
-          MATRIX=$(printf '%s,' $(seq 1 $COUNT) | sed 's/,$//')
-          echo "::set-output name=matrix::[${MATRIX}]"
+          if ! [[ "$COUNT" =~ ^[0-9]+$ ]] || [ "$COUNT" -lt 1 ]; then
+            COUNT=1
+          fi
+          NUMS=$(seq -s, 1 "$COUNT")
+          echo "matrix=[${NUMS}]" >> $GITHUB_OUTPUT
   
   run_build_script:
     runs-on: ubuntu-latest
