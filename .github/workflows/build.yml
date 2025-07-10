@@ -5,10 +5,28 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      count:
+        required: true
+        default: '1'
 
 jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.make-matrix.outputs.matrix }}
+    steps:
+      - id: make-matrix
+        run: |
+          COUNT=${{ github.event.inputs.count }}
+          MATRIX=$(printf '%s,' $(seq 1 $COUNT) | sed 's/,$//')
+          echo "::set-output name=matrix::[${MATRIX}]"
+  
   run_build_script:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        idx: ${{ fromJson(needs.build-matrix.outputs.matrix) }}
 
     steps:
       - name: Checkout code
